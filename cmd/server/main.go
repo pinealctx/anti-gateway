@@ -87,8 +87,6 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	logger.Info("Store initialized", zap.String("db", dbPath))
 
 	// Load dynamically-managed providers from DB
-	var copilotProv *copilotProvider.Provider
-	var kiroProv *kiro.Provider
 	for _, rec := range store.ListProviderRecords() {
 		if !rec.Enabled {
 			logger.Info("Skipping disabled provider", zap.String("name", rec.Name))
@@ -110,12 +108,6 @@ func runServe(cmd *cobra.Command, _ []string) error {
 			logger.Error("Failed to create provider", zap.String("name", rec.Name), zap.Error(err))
 			continue
 		}
-		if cp, ok := p.(*copilotProvider.Provider); ok {
-			copilotProv = cp
-		}
-		if kp, ok := p.(*kiro.Provider); ok {
-			kiroProv = kp
-		}
 		registry.RegisterWithConfig(p, rec.Weight, rec.Models)
 		logger.Info("Registered provider",
 			zap.String("name", rec.Name),
@@ -127,6 +119,16 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// Start background health checks (every 30 seconds)
 	registry.StartHealthCheck(30 * time.Second)
 
+	// Inject store into Kiro providers and restore persisted tokens
+	for _, p := range registry.All() {
+		if kp, ok := p.(*kiro.Provider); ok {
+			kp.SetStore(store)
+			if kp.RestoreToken() {
+				logger.Info("Kiro token restored from persistent storage")
+			}
+		}
+	}
+
 	// Build router config
 	routerCfg := routes.RouterConfig{
 		Registry:        registry,
@@ -137,8 +139,6 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		TenantAuth:      gwCfg.Tenant.Enabled,
 		RateLimiter:     tenant.NewRateLimiter(),
 		CORSOrigins:     gwCfg.Server.CORSOrigins,
-		CopilotProvider: copilotProv,
-		KiroProvider:    kiroProv,
 		ProviderFactory: createProvider,
 	}
 
@@ -182,7 +182,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 func createProvider(pc config.ProviderConfig, logger *zap.Logger) (providers.AIProvider, error) {
 	switch pc.Type {
 	case "kiro":
-		return kiro.NewProvider(logger), nil
+		p := kiro.NewProvider(logger)
+		return p, nil
 
 	case "openai", "openai-compat":
 		if pc.BaseURL == "" {

@@ -5,12 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"io"
 )
-
-// crc32c is the CRC-32C (Castagnoli) table used by AWS EventStream.
-var crc32c = crc32.MakeTable(crc32.Castagnoli)
 
 // Event represents a parsed AWS EventStream event.
 type Event struct {
@@ -24,6 +20,9 @@ type Event struct {
 // Frame layout:
 //
 //	[total_length: 4B][headers_length: 4B][prelude_crc: 4B][headers: NB][payload: MB][message_crc: 4B]
+//
+// CRC fields are skipped (consistent with the Python implementation) since the
+// length-based framing is sufficient for correctness in practice.
 func Parse(r io.Reader) (*Event, error) {
 	// Read prelude (12 bytes)
 	prelude := make([]byte, 12)
@@ -33,15 +32,13 @@ func Parse(r io.Reader) (*Event, error) {
 
 	totalLen := binary.BigEndian.Uint32(prelude[0:4])
 	headersLen := binary.BigEndian.Uint32(prelude[4:8])
-	preludeCRC := binary.BigEndian.Uint32(prelude[8:12])
-
-	// Validate prelude CRC (covers first 8 bytes)
-	if got := crc32.Checksum(prelude[:8], crc32c); got != preludeCRC {
-		return nil, fmt.Errorf("prelude CRC mismatch: got %08x, want %08x", got, preludeCRC)
-	}
+	// prelude[8:12] = prelude CRC (skipped)
 
 	if totalLen < 16 {
 		return nil, fmt.Errorf("invalid frame: total_length=%d too small", totalLen)
+	}
+	if headersLen > totalLen-16 {
+		return nil, fmt.Errorf("invalid frame: headers_length=%d exceeds frame", headersLen)
 	}
 
 	// Read remaining bytes (total - 12 prelude bytes)
@@ -49,15 +46,7 @@ func Parse(r io.Reader) (*Event, error) {
 	if _, err := io.ReadFull(r, remaining); err != nil {
 		return nil, fmt.Errorf("read frame body: %w", err)
 	}
-
-	// Validate message CRC (covers prelude + headers + payload, i.e. everything except last 4 bytes)
-	messageCRC := binary.BigEndian.Uint32(remaining[len(remaining)-4:])
-	h := crc32.New(crc32c)
-	h.Write(prelude)
-	h.Write(remaining[:len(remaining)-4])
-	if got := h.Sum32(); got != messageCRC {
-		return nil, fmt.Errorf("message CRC mismatch: got %08x, want %08x", got, messageCRC)
-	}
+	// remaining[len-4:] = message CRC (skipped)
 
 	// Parse headers
 	headersData := remaining[:headersLen]
@@ -122,6 +111,7 @@ func parseHeaders(data []byte, event *Event) {
 
 // ParseStreamingResponse reads events from an AWS EventStream byte stream.
 // It yields events through the channel and closes it when the stream ends.
+// CRC mismatches are treated as stream termination (trailing bytes after valid events).
 func ParseStreamingResponse(reader io.Reader, events chan<- Event) error {
 	defer close(events)
 

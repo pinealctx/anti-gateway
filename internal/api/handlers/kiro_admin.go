@@ -3,24 +3,36 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/SilkageNet/anti-gateway/internal/core/providers"
 	kiroProvider "github.com/SilkageNet/anti-gateway/internal/providers/kiro"
 	"github.com/gin-gonic/gin"
 )
 
 // KiroAdminHandler provides Kiro PKCE login management endpoints.
 type KiroAdminHandler struct {
-	provider *kiroProvider.Provider
+	registry *providers.Registry
 }
 
-func NewKiroAdminHandler(provider *kiroProvider.Provider) *KiroAdminHandler {
-	return &KiroAdminHandler{provider: provider}
+func NewKiroAdminHandler(registry *providers.Registry) *KiroAdminHandler {
+	return &KiroAdminHandler{registry: registry}
+}
+
+// findKiroProvider dynamically finds the first Kiro provider from the registry.
+func (h *KiroAdminHandler) findKiroProvider() *kiroProvider.Provider {
+	for _, p := range h.registry.All() {
+		if kp, ok := p.(*kiroProvider.Provider); ok {
+			return kp
+		}
+	}
+	return nil
 }
 
 // StartLogin initiates a Kiro PKCE authorization code login flow.
 // POST /admin/kiro/login
 // Body: { "port": 3128 } (optional, default 3128)
 func (h *KiroAdminHandler) StartLogin(c *gin.Context) {
-	if h.provider == nil {
+	provider := h.findKiroProvider()
+	if provider == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no kiro provider configured"})
 		return
 	}
@@ -30,7 +42,7 @@ func (h *KiroAdminHandler) StartLogin(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req) // optional body
 
-	session, err := h.provider.AuthMgr().StartLogin(req.Port)
+	session, err := provider.AuthMgr().StartLogin(req.Port)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -47,13 +59,14 @@ func (h *KiroAdminHandler) StartLogin(c *gin.Context) {
 // GetLoginStatus checks the status of a Kiro PKCE login session.
 // GET /admin/kiro/login/:id
 func (h *KiroAdminHandler) GetLoginStatus(c *gin.Context) {
-	if h.provider == nil {
+	provider := h.findKiroProvider()
+	if provider == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no kiro provider configured"})
 		return
 	}
 
 	id := c.Param("id")
-	session, ok := h.provider.AuthMgr().GetSession(id)
+	session, ok := provider.AuthMgr().GetSession(id)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
@@ -78,13 +91,14 @@ func (h *KiroAdminHandler) GetLoginStatus(c *gin.Context) {
 // CompleteLogin finalizes a Kiro PKCE login by injecting the token into the provider.
 // POST /admin/kiro/login/complete/:id
 func (h *KiroAdminHandler) CompleteLogin(c *gin.Context) {
-	if h.provider == nil {
+	provider := h.findKiroProvider()
+	if provider == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no kiro provider configured"})
 		return
 	}
 
 	id := c.Param("id")
-	session, ok := h.provider.AuthMgr().GetSession(id)
+	session, ok := provider.AuthMgr().GetSession(id)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
@@ -97,6 +111,7 @@ func (h *KiroAdminHandler) CompleteLogin(c *gin.Context) {
 	clientID := session.ClientID
 	tokenEndpoint := session.TokenEndpoint
 	tokenExpiresAt := session.TokenExpiresAt
+	profileArn := session.ProfileArn
 	session.Mu().Unlock()
 
 	if status != "completed" {
@@ -116,10 +131,11 @@ func (h *KiroAdminHandler) CompleteLogin(c *gin.Context) {
 		TokenEndpoint: tokenEndpoint,
 		ExpiresAt:     tokenExpiresAt,
 		IsExternalIdP: true,
+		ProfileArn:    profileArn,
 	}
 
-	h.provider.SetLoginToken(lt)
-	h.provider.AuthMgr().RemoveSession(id)
+	provider.SetLoginToken(lt)
+	provider.AuthMgr().RemoveSession(id)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Kiro token activated via PKCE login",
@@ -129,10 +145,28 @@ func (h *KiroAdminHandler) CompleteLogin(c *gin.Context) {
 // GetStatus shows the current Kiro token status.
 // GET /admin/kiro/status
 func (h *KiroAdminHandler) GetStatus(c *gin.Context) {
-	if h.provider == nil {
+	provider := h.findKiroProvider()
+	if provider == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no kiro provider configured"})
 		return
 	}
 
-	c.JSON(http.StatusOK, h.provider.TokenStatus())
+	c.JSON(http.StatusOK, provider.TokenStatus())
+}
+
+// RefreshToken forces a token refresh.
+// POST /admin/kiro/refresh
+func (h *KiroAdminHandler) RefreshToken(c *gin.Context) {
+	provider := h.findKiroProvider()
+	if provider == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no kiro provider configured"})
+		return
+	}
+
+	if err := provider.ForceRefresh(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, provider.TokenStatus())
 }

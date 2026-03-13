@@ -8,8 +8,6 @@ import (
 	"github.com/SilkageNet/anti-gateway/internal/config"
 	"github.com/SilkageNet/anti-gateway/internal/core/providers"
 	"github.com/SilkageNet/anti-gateway/internal/middleware"
-	copilotProvider "github.com/SilkageNet/anti-gateway/internal/providers/copilot"
-	kiroProvider "github.com/SilkageNet/anti-gateway/internal/providers/kiro"
 	"github.com/SilkageNet/anti-gateway/internal/tenant"
 	"github.com/SilkageNet/anti-gateway/internal/web"
 	"github.com/gin-gonic/gin"
@@ -26,10 +24,8 @@ type RouterConfig struct {
 	Store           *tenant.Store // Always set — used for provider/key storage
 	TenantAuth      bool          // true = per-key auth via Store; false = single api_key auth
 	RateLimiter     *tenant.RateLimiter
-	CORSOrigins     []string                  // Allowed CORS origins (empty = allow all)
-	CopilotProvider *copilotProvider.Provider // Optional: for device flow management
-	KiroProvider    *kiroProvider.Provider    // Optional: for Kiro PKCE login management
-	ProviderFactory handlers.ProviderFactory  // Factory for dynamic provider management
+	CORSOrigins     []string                 // Allowed CORS origins (empty = allow all)
+	ProviderFactory handlers.ProviderFactory // Factory for dynamic provider management
 }
 
 func SetupRouter(cfg RouterConfig) *gin.Engine {
@@ -123,23 +119,20 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 		admin.DELETE("/providers/:id", adminH.DeleteProvider)
 		admin.GET("/usage", adminH.GetUsage)
 
-		// Copilot device flow management (only if copilot provider exists)
-		if cfg.CopilotProvider != nil {
-			copilotH := handlers.NewCopilotAdminHandler(cfg.CopilotProvider)
-			admin.POST("/auth/device-code", copilotH.StartDeviceFlow)
-			admin.GET("/auth/poll/:id", copilotH.PollDeviceFlow)
-			admin.POST("/auth/complete/:id", copilotH.CompleteDeviceFlow)
-			admin.GET("/copilot/accounts", copilotH.ListAccounts)
-		}
+		// Copilot device flow management (dynamic provider lookup)
+		copilotH := handlers.NewCopilotAdminHandler(cfg.Registry)
+		admin.POST("/auth/device-code", copilotH.StartDeviceFlow)
+		admin.GET("/auth/poll/:id", copilotH.PollDeviceFlow)
+		admin.POST("/auth/complete/:id", copilotH.CompleteDeviceFlow)
+		admin.GET("/copilot/accounts", copilotH.ListAccounts)
 
-		// Kiro PKCE login management (only if kiro provider exists)
-		if cfg.KiroProvider != nil {
-			kiroH := handlers.NewKiroAdminHandler(cfg.KiroProvider)
-			admin.POST("/kiro/login", kiroH.StartLogin)
-			admin.GET("/kiro/login/:id", kiroH.GetLoginStatus)
-			admin.POST("/kiro/login/complete/:id", kiroH.CompleteLogin)
-			admin.GET("/kiro/status", kiroH.GetStatus)
-		}
+		// Kiro PKCE login management (dynamic provider lookup)
+		kiroH := handlers.NewKiroAdminHandler(cfg.Registry)
+		admin.POST("/kiro/login", kiroH.StartLogin)
+		admin.GET("/kiro/login/:id", kiroH.GetLoginStatus)
+		admin.POST("/kiro/login/complete/:id", kiroH.CompleteLogin)
+		admin.GET("/kiro/status", kiroH.GetStatus)
+		admin.POST("/kiro/refresh", kiroH.RefreshToken)
 	}
 
 	return r

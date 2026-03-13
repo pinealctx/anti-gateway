@@ -101,6 +101,12 @@ func (s *Store) migrate() error {
 		created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS kv_store (
+		key        TEXT PRIMARY KEY,
+		value      TEXT NOT NULL,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	_, err := s.db.Exec(schema)
 	if err != nil {
@@ -606,4 +612,33 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ========================
+// KV Store — generic key-value persistence
+// ========================
+
+// GetKV retrieves a value by key from the kv_store table.
+func (s *Store) GetKV(key string) (string, bool) {
+	var val string
+	err := s.db.QueryRow("SELECT value FROM kv_store WHERE key = ?", key).Scan(&val)
+	if err != nil {
+		return "", false
+	}
+	return val, true
+}
+
+// SetKV sets a key-value pair in the kv_store table (upsert).
+func (s *Store) SetKV(key, value string) error {
+	_, err := s.db.Exec(
+		"INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+		key, value,
+	)
+	return err
+}
+
+// DeleteKV removes a key from the kv_store table.
+func (s *Store) DeleteKV(key string) error {
+	_, err := s.db.Exec("DELETE FROM kv_store WHERE key = ?", key)
+	return err
 }

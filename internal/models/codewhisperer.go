@@ -6,7 +6,7 @@ package models
 
 type CWRequest struct {
 	ConversationState CWConversationState `json:"conversationState"`
-	ProfileArn        string              `json:"profileArn"`
+	ProfileArn        string              `json:"profileArn,omitempty"`
 }
 
 type CWConversationState struct {

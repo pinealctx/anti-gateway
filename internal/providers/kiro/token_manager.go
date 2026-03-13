@@ -33,6 +33,7 @@ type LoginToken struct {
 	ExpiresAt     time.Time
 	IsExternalIdP bool
 	RefreshScope  string // extracted from JWT aud+scp at login time
+	ProfileArn    string // CW profile ARN, persisted alongside token
 }
 
 // TokenManager manages Kiro tokens obtained from the built-in PKCE login flow.
@@ -89,6 +90,24 @@ func (tm *TokenManager) GetToken() (*TokenInfo, error) {
 	tm.mu.RUnlock()
 
 	return tm.refresh()
+}
+
+// ForceRefresh forces a token refresh regardless of expiry.
+func (tm *TokenManager) ForceRefresh() (*TokenInfo, error) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	if tm.loginToken == nil {
+		return nil, fmt.Errorf("no login token available")
+	}
+
+	token, err := tm.tryLoginTokenRefresh()
+	if err != nil {
+		return nil, err
+	}
+	tm.current = token
+	tm.logger.Info("token force-refreshed", zap.Time("expires_at", token.ExpiresAt))
+	return token, nil
 }
 
 func (tm *TokenManager) refresh() (*TokenInfo, error) {
@@ -247,6 +266,10 @@ func (tm *TokenManager) StartBackgroundRefresh(interval time.Duration) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
+			// Skip refresh if no token source is configured yet (no one has logged in)
+			if !tm.HasToken() {
+				continue
+			}
 			if _, err := tm.refresh(); err != nil {
 				tm.logger.Error("background token refresh failed", zap.Error(err))
 			}

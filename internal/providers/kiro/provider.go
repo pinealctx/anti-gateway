@@ -14,12 +14,22 @@ import (
 	"go.uber.org/zap"
 )
 
+// KVStore is a minimal interface for key-value persistence (implemented by tenant.Store).
+type KVStore interface {
+	GetKV(key string) (string, bool)
+	SetKV(key, value string) error
+}
+
+const kvKeyKiroToken = "kiro:login_token"
+
 // Provider implements the AIProvider interface for Kiro/CodeWhisperer.
 type Provider struct {
-	tokenMgr *TokenManager
-	client   *CWClient
-	authMgr  *KiroAuthManager
-	logger   *zap.Logger
+	tokenMgr   *TokenManager
+	client     *CWClient
+	authMgr    *KiroAuthManager
+	logger     *zap.Logger
+	profileArn string
+	kvStore    KVStore
 }
 
 // NewProvider creates a Kiro provider using the built-in PKCE login flow.
@@ -40,21 +50,114 @@ func (p *Provider) AuthMgr() *KiroAuthManager {
 	return p.authMgr
 }
 
-// SetLoginToken injects a token from the built-in PKCE login and starts background refresh.
+// SetStore injects a KV store for token persistence.
+func (p *Provider) SetStore(store KVStore) {
+	p.kvStore = store
+}
+
+// SetLoginToken injects a token from the built-in PKCE login.
 func (p *Provider) SetLoginToken(lt *LoginToken) {
 	p.tokenMgr.SetLoginToken(lt)
-	// Ensure background refresh is running for the login token
-	p.tokenMgr.StartBackgroundRefresh(2 * time.Minute)
+	p.profileArn = lt.ProfileArn
+	p.persistToken(lt)
+}
+
+// persistedToken is the JSON-serializable form stored in the DB.
+type persistedToken struct {
+	AccessToken   string    `json:"access_token"`
+	RefreshToken  string    `json:"refresh_token"`
+	ClientID      string    `json:"client_id"`
+	TokenEndpoint string    `json:"token_endpoint"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	IsExternalIdP bool      `json:"is_external_idp"`
+	RefreshScope  string    `json:"refresh_scope,omitempty"`
+	ProfileArn    string    `json:"profile_arn,omitempty"`
+}
+
+func (p *Provider) persistToken(lt *LoginToken) {
+	if p.kvStore == nil {
+		return
+	}
+	pt := persistedToken{
+		AccessToken:   lt.AccessToken,
+		RefreshToken:  lt.RefreshToken,
+		ClientID:      lt.ClientID,
+		TokenEndpoint: lt.TokenEndpoint,
+		ExpiresAt:     lt.ExpiresAt,
+		IsExternalIdP: lt.IsExternalIdP,
+		RefreshScope:  lt.RefreshScope,
+		ProfileArn:    lt.ProfileArn,
+	}
+	data, err := json.Marshal(pt)
+	if err != nil {
+		p.logger.Error("failed to marshal token for persistence", zap.Error(err))
+		return
+	}
+	if err := p.kvStore.SetKV(kvKeyKiroToken, string(data)); err != nil {
+		p.logger.Error("failed to persist kiro token", zap.Error(err))
+	}
+}
+
+// RestoreToken loads a previously persisted token from the KV store.
+// Returns true if a token was successfully restored.
+func (p *Provider) RestoreToken() bool {
+	if p.kvStore == nil {
+		return false
+	}
+	data, ok := p.kvStore.GetKV(kvKeyKiroToken)
+	if !ok || data == "" {
+		return false
+	}
+	var pt persistedToken
+	if err := json.Unmarshal([]byte(data), &pt); err != nil {
+		p.logger.Error("failed to unmarshal persisted token", zap.Error(err))
+		return false
+	}
+
+	lt := &LoginToken{
+		AccessToken:   pt.AccessToken,
+		RefreshToken:  pt.RefreshToken,
+		ClientID:      pt.ClientID,
+		TokenEndpoint: pt.TokenEndpoint,
+		ExpiresAt:     pt.ExpiresAt,
+		IsExternalIdP: pt.IsExternalIdP,
+		RefreshScope:  pt.RefreshScope,
+		ProfileArn:    pt.ProfileArn,
+	}
+	p.tokenMgr.SetLoginToken(lt)
+	p.profileArn = pt.ProfileArn
+	p.logger.Info("kiro token restored from DB",
+		zap.Bool("has_refresh", pt.RefreshToken != ""),
+		zap.String("profile_arn", pt.ProfileArn),
+		zap.Time("expires_at", pt.ExpiresAt))
+	return true
+}
+
+// ForceRefresh forces a token refresh and re-persists the updated token.
+func (p *Provider) ForceRefresh() error {
+	_, err := p.tokenMgr.ForceRefresh()
+	if err != nil {
+		return err
+	}
+	// Re-persist the updated login token
+	p.tokenMgr.mu.RLock()
+	lt := p.tokenMgr.loginToken
+	p.tokenMgr.mu.RUnlock()
+	if lt != nil {
+		p.persistToken(lt)
+	}
+	return nil
 }
 
 // TokenStatus returns information about the current token state.
-func (p *Provider) TokenStatus() map[string]interface{} {
+func (p *Provider) TokenStatus() map[string]any {
 	p.tokenMgr.mu.RLock()
 	defer p.tokenMgr.mu.RUnlock()
 
-	status := map[string]interface{}{
+	status := map[string]any{
 		"has_login":   p.tokenMgr.loginToken != nil,
 		"has_current": p.tokenMgr.current != nil,
+		"profile_arn": p.profileArn,
 	}
 	if p.tokenMgr.current != nil {
 		status["expires_at"] = p.tokenMgr.current.ExpiresAt
@@ -121,7 +224,7 @@ func (p *Provider) StreamCompletion(ctx context.Context, req *models.ChatComplet
 		return err
 	}
 
-	cwReq, err := converter.OpenAIToCW(req, "")
+	cwReq, err := converter.OpenAIToCW(req, p.profileArn)
 	if err != nil {
 		stream <- providers.StreamChunk{Error: fmt.Errorf("conversion error: %w", err)}
 		return err

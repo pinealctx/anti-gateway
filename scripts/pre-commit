@@ -1,0 +1,55 @@
+#!/bin/sh
+# anti-gateway pre-commit hook
+# Installs with: make setup-hooks (copies to .git/hooks/pre-commit)
+#
+# Checks: gitleaks, go fmt, golangci-lint, go build, go test
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+pass() { printf "${GREEN}✓ %s${NC}\n" "$1"; }
+fail() { printf "${RED}✗ %s${NC}\n" "$1"; exit 1; }
+info() { printf "${YELLOW}▶ %s${NC}\n" "$1"; }
+
+# ── gitleaks ──────────────────────────────────────────
+if command -v gitleaks >/dev/null 2>&1; then
+    info "gitleaks: scanning for secrets..."
+    gitleaks git --pre-commit --no-banner 2>/dev/null || fail "gitleaks: secrets detected"
+    pass "gitleaks"
+else
+    printf "${YELLOW}⚠ gitleaks not installed, skipping${NC}\n"
+fi
+
+# ── go fmt ────────────────────────────────────────────
+info "go fmt: checking formatting..."
+UNFMT=$(gofmt -l . 2>&1 | grep -v vendor || true)
+if [ -n "$UNFMT" ]; then
+    printf "${RED}Unformatted files:${NC}\n%s\n" "$UNFMT"
+    fail "go fmt: run 'go fmt ./...' to fix"
+fi
+pass "go fmt"
+
+# ── golangci-lint ─────────────────────────────────────
+if command -v golangci-lint >/dev/null 2>&1; then
+    info "golangci-lint: linting..."
+    golangci-lint run || fail "golangci-lint: lint errors found"
+    pass "golangci-lint"
+else
+    printf "${YELLOW}⚠ golangci-lint not installed, skipping${NC}\n"
+fi
+
+# ── go build ──────────────────────────────────────────
+info "go build: compiling..."
+go build ./... || fail "go build: compilation failed"
+pass "go build"
+
+# ── go test ───────────────────────────────────────────
+info "go test: running tests..."
+go test ./... || fail "go test: tests failed"
+pass "go test"
+
+printf "\n${GREEN}All checks passed.${NC}\n"

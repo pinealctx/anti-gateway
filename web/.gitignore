@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output (generated into internal/web/static/ via vite build)
+dist/
+dist-ssr/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env
+*.local
