@@ -56,21 +56,17 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		log.Fatalf("Failed to init logger: %v", err)
 	}
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	logger.Info("Starting AntiGateway",
 		zap.String("version", config.Version),
 		zap.String("host", gwCfg.Server.Host),
 		zap.Int("port", gwCfg.Server.Port),
-		zap.Int("providers", len(gwCfg.Providers)),
-		zap.Bool("multi_tenant", gwCfg.Tenant.Enabled),
+		zap.Bool("tenant_auth", gwCfg.Tenant.Enabled),
 	)
 
 	// Initialize provider registry
 	fallback := gwCfg.Defaults.Provider
-	if fallback == "" && len(gwCfg.Providers) > 0 {
-		fallback = gwCfg.Providers[0].Name
-	}
 	strategy := providers.LBStrategy(gwCfg.Defaults.LBStrategy)
 	if strategy == "" {
 		strategy = providers.LBWeightedRandom
@@ -78,67 +74,72 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	registry := providers.NewRegistryWithStrategy(fallback, strategy)
 	logger.Info("Load balancing strategy", zap.String("strategy", string(strategy)))
 
-	// Register providers from config
+	// SQLite store — always created for provider & key management
+	dbPath := gwCfg.Tenant.DBPath
+	if dbPath == "" {
+		dbPath = "antigateway.db"
+	}
+	store, err := tenant.NewStore(dbPath)
+	if err != nil {
+		log.Fatalf("Failed to init store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	logger.Info("Store initialized", zap.String("db", dbPath))
+
+	// Load dynamically-managed providers from DB
 	var copilotProv *copilotProvider.Provider
 	var kiroProv *kiro.Provider
-	for _, pc := range gwCfg.Providers {
-		if !pc.Enabled {
-			logger.Info("Skipping disabled provider", zap.String("name", pc.Name))
+	for _, rec := range store.ListProviderRecords() {
+		if !rec.Enabled {
+			logger.Info("Skipping disabled provider", zap.String("name", rec.Name))
 			continue
 		}
-
+		pc := config.ProviderConfig{
+			Name:         rec.Name,
+			Type:         rec.Type,
+			Weight:       rec.Weight,
+			Enabled:      rec.Enabled,
+			BaseURL:      rec.BaseURL,
+			APIKey:       rec.APIKey,
+			GithubTokens: rec.GithubTokens,
+			Models:       rec.Models,
+			DefaultModel: rec.DefaultModel,
+		}
 		p, err := createProvider(pc, logger)
 		if err != nil {
-			logger.Error("Failed to create provider", zap.String("name", pc.Name), zap.Error(err))
+			logger.Error("Failed to create provider", zap.String("name", rec.Name), zap.Error(err))
 			continue
 		}
-
-		// Track copilot provider for admin API
 		if cp, ok := p.(*copilotProvider.Provider); ok {
 			copilotProv = cp
 		}
-
-		// Track kiro provider for admin API
 		if kp, ok := p.(*kiro.Provider); ok {
 			kiroProv = kp
 		}
-
-		registry.RegisterWithConfig(p, pc.Weight, pc.Models)
+		registry.RegisterWithConfig(p, rec.Weight, rec.Models)
 		logger.Info("Registered provider",
-			zap.String("name", pc.Name),
-			zap.String("type", pc.Type),
-			zap.Int("weight", pc.Weight),
-			zap.Int("models", len(pc.Models)),
+			zap.String("name", rec.Name),
+			zap.String("type", rec.Type),
+			zap.Int("weight", rec.Weight),
 		)
 	}
 
 	// Start background health checks (every 30 seconds)
 	registry.StartHealthCheck(30 * time.Second)
 
-	// Initialize tenant store (if multi-tenant enabled)
+	// Build router config
 	routerCfg := routes.RouterConfig{
 		Registry:        registry,
 		Logger:          logger,
 		APIKey:          gwCfg.Auth.APIKey,
 		AdminKey:        gwCfg.Auth.AdminKey,
+		Store:           store,
+		TenantAuth:      gwCfg.Tenant.Enabled,
+		RateLimiter:     tenant.NewRateLimiter(),
+		CORSOrigins:     gwCfg.Server.CORSOrigins,
 		CopilotProvider: copilotProv,
 		KiroProvider:    kiroProv,
-	}
-
-	if gwCfg.Tenant.Enabled {
-		dbPath := gwCfg.Tenant.DBPath
-		if dbPath == "" {
-			dbPath = "antigateway_tenant.db"
-		}
-		store, err := tenant.NewStore(dbPath)
-		if err != nil {
-			log.Fatalf("Failed to init tenant store: %v", err)
-		}
-		defer store.Close()
-
-		routerCfg.Store = store
-		routerCfg.RateLimiter = tenant.NewRateLimiter()
-		logger.Info("Multi-tenant mode enabled", zap.String("db", dbPath))
+		ProviderFactory: createProvider,
 	}
 
 	// Setup Gin router

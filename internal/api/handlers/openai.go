@@ -57,7 +57,7 @@ func (h *OpenAIHandler) ChatCompletions(c *gin.Context) {
 	}
 }
 
-func (h *OpenAIHandler) handleNonStream(c *gin.Context, provider providers.AIProvider, req *models.ChatCompletionRequest, reqID string) {
+func (h *OpenAIHandler) handleNonStream(c *gin.Context, provider providers.AIProvider, req *models.ChatCompletionRequest, _ string) {
 	resp, err := provider.ChatCompletion(c.Request.Context(), req)
 	if err != nil {
 		middleware.ErrorsTotal.WithLabelValues("provider").Inc()
@@ -66,6 +66,9 @@ func (h *OpenAIHandler) handleNonStream(c *gin.Context, provider providers.AIPro
 		})
 		return
 	}
+	if resp.Usage != nil {
+		middleware.RecordTokenUsage(c, resp.Usage.TotalTokens)
+	}
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -73,7 +76,9 @@ func (h *OpenAIHandler) handleStream(c *gin.Context, provider providers.AIProvid
 	completionID := "chatcmpl-" + reqID
 	writer := streaming.NewOpenAISSEWriter(c, req.Model, completionID)
 
-	writer.WriteRoleDelta()
+	if err := writer.WriteRoleDelta(); err != nil {
+		return
+	}
 
 	var fullOutput string
 	var hasToolCalls bool
@@ -81,26 +86,34 @@ func (h *OpenAIHandler) handleStream(c *gin.Context, provider providers.AIProvid
 
 	for continueCount <= continuation.MaxContinuations {
 		stream := make(chan providers.StreamChunk, 64)
-		go provider.StreamCompletion(c.Request.Context(), req, stream)
+		go func() {
+			if err := provider.StreamCompletion(c.Request.Context(), req, stream); err != nil {
+				h.logger.Error("stream completion error", zap.Error(err))
+			}
+		}()
 
 		truncated := false
 		for chunk := range stream {
 			if chunk.Error != nil {
 				h.logger.Error("stream error", zap.Error(chunk.Error))
-				writer.WriteContentDelta("\n\n[Error: " + chunk.Error.Error() + "]")
-				writer.WriteFinish("stop")
+				_ = writer.WriteContentDelta("\n\n[Error: " + chunk.Error.Error() + "]")
+				_ = writer.WriteFinish("stop")
 				return
 			}
 
 			if chunk.Content != "" {
 				fullOutput += chunk.Content
-				writer.WriteContentDelta(chunk.Content)
+				if err := writer.WriteContentDelta(chunk.Content); err != nil {
+					return
+				}
 			}
 
 			if len(chunk.ToolCalls) > 0 {
 				hasToolCalls = true
 				middleware.ToolCallsTotal.Add(float64(len(chunk.ToolCalls)))
-				writer.WriteToolCallDelta(chunk.ToolCalls)
+				if err := writer.WriteToolCallDelta(chunk.ToolCalls); err != nil {
+					return
+				}
 			}
 
 			if chunk.FinishReason == "length" {
@@ -124,7 +137,7 @@ func (h *OpenAIHandler) handleStream(c *gin.Context, provider providers.AIProvid
 	if hasToolCalls {
 		finishReason = "tool_calls"
 	}
-	writer.WriteFinish(finishReason)
+	_ = writer.WriteFinish(finishReason)
 }
 
 // Models handles /v1/models — returns available models.

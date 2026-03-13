@@ -98,14 +98,14 @@ func (c *CWClient) GenerateStream(ctx context.Context, cwReq *models.CWRequest, 
 
 		if resp.StatusCode >= 500 {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("cw returned %d: %s", resp.StatusCode, string(body))
 			continue // retry on 5xx
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("cw returned %d: %s", resp.StatusCode, string(body))
 		}
 
@@ -119,7 +119,7 @@ func (c *CWClient) GenerateStream(ctx context.Context, cwReq *models.CWRequest, 
 
 func (c *CWClient) processStream(body io.ReadCloser, out chan<- CWStreamEvent) {
 	defer close(out)
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	rawEvents := make(chan eventstream.Event, 32)
 	go func() {
@@ -137,7 +137,7 @@ func (c *CWClient) processStream(body io.ReadCloser, out chan<- CWStreamEvent) {
 	for raw := range rawEvents {
 		if raw.MessageType == "exception" {
 			var exc models.CWExceptionEvent
-			json.Unmarshal(raw.Payload, &exc)
+			_ = json.Unmarshal(raw.Payload, &exc)
 			out <- CWStreamEvent{Type: "exception", Error: fmt.Errorf("CW exception: %s", exc.Message)}
 			continue
 		}
@@ -186,7 +186,7 @@ func (c *CWClient) processStream(body io.ReadCloser, out chan<- CWStreamEvent) {
 			}
 			if evt.Stop && activeTool != nil {
 				var input any
-				json.Unmarshal([]byte(activeTool.InputBuf), &input)
+				_ = json.Unmarshal([]byte(activeTool.InputBuf), &input)
 				out <- CWStreamEvent{
 					Type: "tool_use",
 					ToolUse: &CWToolUseAccumulator{

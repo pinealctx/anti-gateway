@@ -91,7 +91,7 @@ func (h *AnthropicHandler) handleNonStream(c *gin.Context, provider providers.AI
 
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
-		if content, ok := choice.Message.Content.(string); ok && content != "" {
+		if content := models.ContentText(choice.Message.Content); content != "" {
 			anthropicResp.Content = append(anthropicResp.Content, models.AnthropicContentBlock{
 				Type: "text",
 				Text: content,
@@ -99,18 +99,15 @@ func (h *AnthropicHandler) handleNonStream(c *gin.Context, provider providers.AI
 		}
 		// Convert tool_calls to Anthropic tool_use content blocks
 		for _, tc := range choice.Message.ToolCalls {
-			var input any
-			if tc.Function.Arguments != "" {
-				json.Unmarshal([]byte(tc.Function.Arguments), &input)
-			}
-			if input == nil {
-				input = map[string]any{}
+			inputRaw := json.RawMessage(tc.Function.Arguments)
+			if !json.Valid(inputRaw) || len(inputRaw) == 0 {
+				inputRaw = json.RawMessage(`{}`)
 			}
 			anthropicResp.Content = append(anthropicResp.Content, models.AnthropicContentBlock{
 				Type:  "tool_use",
 				ID:    tc.ID,
 				Name:  tc.Function.Name,
-				Input: input,
+				Input: inputRaw,
 			})
 		}
 		switch choice.FinishReason {
@@ -125,14 +122,22 @@ func (h *AnthropicHandler) handleNonStream(c *gin.Context, provider providers.AI
 		}
 	}
 
+	if resp.Usage != nil {
+		middleware.RecordTokenUsage(c, resp.Usage.TotalTokens)
+	}
+
 	c.JSON(http.StatusOK, anthropicResp)
 }
 
 func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIProvider, req *models.ChatCompletionRequest, model, reqID string) {
 	writer := streaming.NewAnthropicSSEWriter(c, model, reqID)
 
-	writer.WriteMessageStart()
-	writer.WriteContentBlockStart()
+	if err := writer.WriteMessageStart(); err != nil {
+		return
+	}
+	if err := writer.WriteContentBlockStart(); err != nil {
+		return
+	}
 
 	var fullOutput string
 	hasTextContent := false
@@ -141,20 +146,26 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 
 	for continueCount <= continuation.MaxContinuations {
 		stream := make(chan providers.StreamChunk, 64)
-		go provider.StreamCompletion(c.Request.Context(), req, stream)
+		go func() {
+			if err := provider.StreamCompletion(c.Request.Context(), req, stream); err != nil {
+				h.logger.Error("stream completion error", zap.Error(err))
+			}
+		}()
 
 		truncated := false
 		for chunk := range stream {
 			if chunk.Error != nil {
 				h.logger.Error("stream error", zap.Error(chunk.Error))
-				writer.WriteContentDelta("\n\n[Error: " + chunk.Error.Error() + "]")
+				_ = writer.WriteContentDelta("\n\n[Error: " + chunk.Error.Error() + "]")
 				break
 			}
 
 			if chunk.Content != "" {
 				hasTextContent = true
 				fullOutput += chunk.Content
-				writer.WriteContentDelta(chunk.Content)
+				if err := writer.WriteContentDelta(chunk.Content); err != nil {
+					return
+				}
 			}
 
 			if len(chunk.ToolCalls) > 0 {
@@ -163,16 +174,24 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 
 				// Close text block if we had text content
 				if hasTextContent {
-					writer.WriteContentBlockStop()
+					if err := writer.WriteContentBlockStop(); err != nil {
+						return
+					}
 					hasTextContent = false
 				}
 
 				for _, tc := range chunk.ToolCalls {
-					writer.WriteToolUseBlockStart(tc.ID, tc.Function.Name)
-					if tc.Function.Arguments != "" {
-						writer.WriteToolUseInputDelta(tc.Function.Arguments)
+					if err := writer.WriteToolUseBlockStart(tc.ID, tc.Function.Name); err != nil {
+						return
 					}
-					writer.WriteContentBlockStop()
+					if tc.Function.Arguments != "" {
+						if err := writer.WriteToolUseInputDelta(tc.Function.Arguments); err != nil {
+							return
+						}
+					}
+					if err := writer.WriteContentBlockStop(); err != nil {
+						return
+					}
 				}
 			}
 
@@ -194,20 +213,44 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 
 	// Close any remaining open text block
 	if hasTextContent && !hasToolUse {
-		writer.WriteContentBlockStop()
+		_ = writer.WriteContentBlockStop()
 	}
 
 	stopReason := "end_turn"
 	if hasToolUse {
 		stopReason = "tool_use"
 	}
-	writer.WriteMessageDelta(stopReason, 0)
-	writer.WriteMessageStop()
+	_ = writer.WriteMessageDelta(stopReason, 0)
+	_ = writer.WriteMessageStop()
 }
 
-// CountTokens handles /v1/messages/count_tokens (stub).
+// CountTokens handles /v1/messages/count_tokens.
+// Estimates token count from message content using a character-based heuristic
+// (~4 chars per token for English text, consistent with BPE tokenizer averages).
 func (h *AnthropicHandler) CountTokens(c *gin.Context) {
+	var req struct {
+		Model    string                    `json:"model"`
+		System   json.RawMessage           `json:"system,omitempty"`
+		Messages []models.AnthropicMessage `json:"messages"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"type":  "error",
+			"error": gin.H{"type": "invalid_request_error", "message": err.Error()},
+		})
+		return
+	}
+
+	totalChars := len(string(req.System))
+	for _, msg := range req.Messages {
+		totalChars += len(string(msg.Content))
+	}
+
+	// ~4 chars per token is a reasonable BPE approximation.
+	// Add a small overhead for message framing (role tokens, etc.).
+	estimated := totalChars/4 + len(req.Messages)*4
+
 	c.JSON(http.StatusOK, gin.H{
-		"input_tokens": 0,
+		"input_tokens": estimated,
 	})
 }

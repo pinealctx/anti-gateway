@@ -13,12 +13,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Store manages API keys and usage records.
+// Store manages API keys, usage records, and provider configurations.
 type Store struct {
 	db *sql.DB
 	mu sync.RWMutex
 	// In-memory key cache for fast auth lookup
 	cache map[string]*APIKey // key string → APIKey
+	// In-memory provider cache
+	providerCache map[string]*ProviderRecord // provider ID → ProviderRecord
 }
 
 // NewStore opens (or creates) an SQLite database for tenant management.
@@ -29,17 +31,23 @@ func NewStore(dbPath string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:    db,
-		cache: make(map[string]*APIKey),
+		db:            db,
+		cache:         make(map[string]*APIKey),
+		providerCache: make(map[string]*ProviderRecord),
 	}
 
 	if err := s.migrate(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 
 	if err := s.loadCache(); err != nil {
-		db.Close()
+		_ = db.Close()
+		return nil, err
+	}
+
+	if err := s.loadProviderCache(); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 
@@ -78,13 +86,28 @@ func (s *Store) migrate() error {
 
 	CREATE INDEX IF NOT EXISTS idx_usage_key_time ON usage_records(key_id, created_at);
 	CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_records(model, created_at);
+
+	CREATE TABLE IF NOT EXISTS providers (
+		id            TEXT PRIMARY KEY,
+		name          TEXT UNIQUE NOT NULL,
+		type          TEXT NOT NULL,
+		weight        INTEGER NOT NULL DEFAULT 1,
+		enabled       INTEGER NOT NULL DEFAULT 1,
+		base_url      TEXT NOT NULL DEFAULT '',
+		api_key       TEXT NOT NULL DEFAULT '',
+		github_tokens TEXT NOT NULL DEFAULT '[]',
+		models        TEXT NOT NULL DEFAULT '[]',
+		default_model TEXT NOT NULL DEFAULT '',
+		created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	_, err := s.db.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("migrate tenant db: %w", err)
 	}
 	// Safe column addition for existing databases
-	s.db.Exec("ALTER TABLE api_keys ADD COLUMN default_provider TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE api_keys ADD COLUMN default_provider TEXT NOT NULL DEFAULT ''")
 	return nil
 }
 
@@ -96,7 +119,7 @@ func (s *Store) loadCache() error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	s.cache = make(map[string]*APIKey)
 	for rows.Next() {
@@ -118,9 +141,9 @@ func scanKey(rows *sql.Rows) (*APIKey, error) {
 		return nil, err
 	}
 	k.Enabled = enabled == 1
-	json.Unmarshal([]byte(modelsJSON), &k.AllowedModels)
-	json.Unmarshal([]byte(providersJSON), &k.AllowedProviders)
-	json.Unmarshal([]byte(metaJSON), &k.Metadata)
+	_ = json.Unmarshal([]byte(modelsJSON), &k.AllowedModels)
+	_ = json.Unmarshal([]byte(providersJSON), &k.AllowedProviders)
+	_ = json.Unmarshal([]byte(metaJSON), &k.Metadata)
 	if k.AllowedModels == nil {
 		k.AllowedModels = []string{}
 	}
@@ -332,7 +355,7 @@ func (s *Store) QueryUsage(q UsageQuery) ([]UsageSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []UsageSummary
 	for rows.Next() {
@@ -397,18 +420,184 @@ func WithDefaultProvider(provider string) KeyOption {
 }
 
 // ============================================================
+// Provider persistence
+// ============================================================
+
+func (s *Store) loadProviderCache() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.Query("SELECT id, name, type, weight, enabled, base_url, api_key, github_tokens, models, default_model, created_at, updated_at FROM providers")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	s.providerCache = make(map[string]*ProviderRecord)
+	for rows.Next() {
+		p, err := scanProvider(rows)
+		if err != nil {
+			return err
+		}
+		s.providerCache[p.ID] = p
+	}
+	return rows.Err()
+}
+
+func scanProvider(rows *sql.Rows) (*ProviderRecord, error) {
+	var p ProviderRecord
+	var enabled int
+	var tokensJSON, modelsJSON string
+	err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.Weight, &enabled,
+		&p.BaseURL, &p.APIKey, &tokensJSON, &modelsJSON, &p.DefaultModel,
+		&p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	p.Enabled = enabled == 1
+	_ = json.Unmarshal([]byte(tokensJSON), &p.GithubTokens)
+	_ = json.Unmarshal([]byte(modelsJSON), &p.Models)
+	if p.GithubTokens == nil {
+		p.GithubTokens = []string{}
+	}
+	if p.Models == nil {
+		p.Models = []string{}
+	}
+	return &p, nil
+}
+
+// CreateProvider persists a new provider configuration.
+func (s *Store) CreateProvider(name, typ string, opts ...ProviderOption) (*ProviderRecord, error) {
+	p := &ProviderRecord{
+		ID:           generateID(),
+		Name:         name,
+		Type:         typ,
+		Weight:       1,
+		Enabled:      true,
+		GithubTokens: []string{},
+		Models:       []string{},
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	tokensJSON, _ := json.Marshal(p.GithubTokens)
+	modelsJSON, _ := json.Marshal(p.Models)
+
+	_, err := s.db.Exec(
+		`INSERT INTO providers (id, name, type, weight, enabled, base_url, api_key, github_tokens, models, default_model, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, p.Type, p.Weight, boolToInt(p.Enabled),
+		p.BaseURL, p.APIKey, string(tokensJSON), string(modelsJSON), p.DefaultModel,
+		p.CreatedAt, p.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create provider: %w", err)
+	}
+
+	s.mu.Lock()
+	s.providerCache[p.ID] = p
+	s.mu.Unlock()
+	return p, nil
+}
+
+// GetProvider returns a provider by ID.
+func (s *Store) GetProvider(id string) (*ProviderRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if p, ok := s.providerCache[id]; ok {
+		return p, nil
+	}
+	return nil, fmt.Errorf("provider not found: %s", id)
+}
+
+// GetProviderByName returns a provider by name.
+func (s *Store) GetProviderByName(name string) (*ProviderRecord, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, p := range s.providerCache {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return nil, false
+}
+
+// ListProviderRecords returns all persisted provider configurations.
+func (s *Store) ListProviderRecords() []*ProviderRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*ProviderRecord, 0, len(s.providerCache))
+	for _, p := range s.providerCache {
+		result = append(result, p)
+	}
+	return result
+}
+
+// UpdateProvider updates an existing provider configuration.
+func (s *Store) UpdateProvider(id string, opts ...ProviderOption) (*ProviderRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	target, ok := s.providerCache[id]
+	if !ok {
+		return nil, fmt.Errorf("provider not found: %s", id)
+	}
+
+	for _, opt := range opts {
+		opt(target)
+	}
+	target.UpdatedAt = time.Now().UTC()
+
+	tokensJSON, _ := json.Marshal(target.GithubTokens)
+	modelsJSON, _ := json.Marshal(target.Models)
+
+	_, err := s.db.Exec(
+		`UPDATE providers SET name=?, type=?, weight=?, enabled=?, base_url=?, api_key=?, github_tokens=?, models=?, default_model=?, updated_at=? WHERE id=?`,
+		target.Name, target.Type, target.Weight, boolToInt(target.Enabled),
+		target.BaseURL, target.APIKey, string(tokensJSON), string(modelsJSON), target.DefaultModel,
+		target.UpdatedAt, target.ID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update provider: %w", err)
+	}
+
+	s.providerCache[id] = target
+	return target, nil
+}
+
+// DeleteProvider removes a provider configuration.
+func (s *Store) DeleteProvider(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.providerCache[id]; !ok {
+		return fmt.Errorf("provider not found: %s", id)
+	}
+
+	_, err := s.db.Exec("DELETE FROM providers WHERE id=?", id)
+	if err != nil {
+		return fmt.Errorf("delete provider: %w", err)
+	}
+	delete(s.providerCache, id)
+	return nil
+}
+
+// ============================================================
 // Helpers
 // ============================================================
 
 func generateID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
 func generateAPIKey() string {
 	b := make([]byte, 24)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return "ag-" + hex.EncodeToString(b)
 }
 

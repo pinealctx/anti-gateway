@@ -21,12 +21,15 @@ import (
 type RouterConfig struct {
 	Registry        *providers.Registry
 	Logger          *zap.Logger
-	APIKey          string        // Legacy single-key auth (used when Store is nil)
+	APIKey          string        // Legacy single-key auth (used when TenantAuth is false)
 	AdminKey        string        // Admin API authentication key
-	Store           *tenant.Store // Tenant store (nil = single-key mode)
+	Store           *tenant.Store // Always set — used for provider/key storage
+	TenantAuth      bool          // true = per-key auth via Store; false = single api_key auth
 	RateLimiter     *tenant.RateLimiter
+	CORSOrigins     []string                  // Allowed CORS origins (empty = allow all)
 	CopilotProvider *copilotProvider.Provider // Optional: for device flow management
 	KiroProvider    *kiroProvider.Provider    // Optional: for Kiro PKCE login management
+	ProviderFactory handlers.ProviderFactory  // Factory for dynamic provider management
 }
 
 func SetupRouter(cfg RouterConfig) *gin.Engine {
@@ -38,7 +41,7 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger(cfg.Logger))
 	r.Use(middleware.Metrics())
-	r.Use(middleware.CORS())
+	r.Use(middleware.CORS(cfg.CORSOrigins))
 
 	// Root endpoint: service info
 	r.GET("/", func(c *gin.Context) {
@@ -83,8 +86,8 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 
 	// API routes (with auth)
 	api := r.Group("/")
-	if cfg.Store != nil {
-		// Multi-tenant auth
+	if cfg.TenantAuth && cfg.Store != nil {
+		// Multi-tenant auth (per-key with rate limits)
 		api.Use(middleware.TenantAuth(cfg.Store, cfg.RateLimiter))
 	} else {
 		// Legacy single-key auth
@@ -107,13 +110,17 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 		admin := r.Group("/admin")
 		admin.Use(adminAuth(cfg.AdminKey))
 
-		adminH := handlers.NewAdminHandler(cfg.Store, cfg.Registry)
+		adminH := handlers.NewAdminHandler(cfg.Store, cfg.Registry, cfg.ProviderFactory, cfg.Logger)
 		admin.POST("/keys", adminH.CreateKey)
 		admin.GET("/keys", adminH.ListKeys)
 		admin.GET("/keys/:id", adminH.GetKey)
 		admin.PUT("/keys/:id", adminH.UpdateKey)
 		admin.DELETE("/keys/:id", adminH.DeleteKey)
 		admin.GET("/providers", adminH.ListProviders)
+		admin.POST("/providers", adminH.CreateProvider)
+		admin.GET("/providers/:id", adminH.GetProvider)
+		admin.PUT("/providers/:id", adminH.UpdateProvider)
+		admin.DELETE("/providers/:id", adminH.DeleteProvider)
 		admin.GET("/usage", adminH.GetUsage)
 
 		// Copilot device flow management (only if copilot provider exists)

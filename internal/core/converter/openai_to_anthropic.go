@@ -25,9 +25,9 @@ func OpenAIToAnthropic(req *models.ChatCompletionRequest) (*models.AnthropicRequ
 	for _, msg := range req.Messages {
 		switch msg.Role {
 		case "system":
-			text := contentToString(msg.Content)
+			text := models.ContentText(msg.Content)
 			if text != "" {
-				anthReq.System = text
+				anthReq.System = models.RawString(text)
 			}
 		case "user":
 			anthMsgs = append(anthMsgs, convertOpenAIUserToAnthropic(msg))
@@ -58,13 +58,9 @@ func OpenAIToAnthropic(req *models.ChatCompletionRequest) (*models.AnthropicRequ
 
 func convertOpenAIUserToAnthropic(msg models.ChatMessage) models.AnthropicMessage {
 	// Check if content is a multi-part array (vision)
-	if parts, ok := msg.Content.([]any); ok {
+	if parts, ok := models.ContentParts(msg.Content); ok {
 		var blocks []models.AnthropicContentBlock
-		for _, part := range parts {
-			pm, ok := part.(map[string]any)
-			if !ok {
-				continue
-			}
+		for _, pm := range parts {
 			ptype, _ := pm["type"].(string)
 			switch ptype {
 			case "text":
@@ -92,14 +88,14 @@ func convertOpenAIUserToAnthropic(msg models.ChatMessage) models.AnthropicMessag
 			}
 		}
 		if len(blocks) > 0 {
-			return models.AnthropicMessage{Role: "user", Content: blocks}
+			return models.AnthropicMessage{Role: "user", Content: models.MustMarshal(blocks)}
 		}
 	}
 
 	// Simple text
 	return models.AnthropicMessage{
 		Role:    "user",
-		Content: contentToString(msg.Content),
+		Content: models.RawString(models.ContentText(msg.Content)),
 	}
 }
 
@@ -107,13 +103,13 @@ func convertOpenAIAssistantToAnthropic(msg models.ChatMessage) models.AnthropicM
 	if len(msg.ToolCalls) == 0 {
 		return models.AnthropicMessage{
 			Role:    "assistant",
-			Content: contentToString(msg.Content),
+			Content: models.RawString(models.ContentText(msg.Content)),
 		}
 	}
 
 	// Assistant with tool calls → content blocks
 	var blocks []models.AnthropicContentBlock
-	text := contentToString(msg.Content)
+	text := models.ContentText(msg.Content)
 	if text != "" {
 		blocks = append(blocks, models.AnthropicContentBlock{
 			Type: "text",
@@ -121,58 +117,57 @@ func convertOpenAIAssistantToAnthropic(msg models.ChatMessage) models.AnthropicM
 		})
 	}
 	for _, tc := range msg.ToolCalls {
-		var input any
-		if tc.Function.Arguments != "" {
-			json.Unmarshal([]byte(tc.Function.Arguments), &input)
-		}
-		if input == nil {
-			input = map[string]any{}
+		inputRaw := json.RawMessage(tc.Function.Arguments)
+		if !json.Valid(inputRaw) || len(inputRaw) == 0 {
+			inputRaw = json.RawMessage(`{}`)
 		}
 		blocks = append(blocks, models.AnthropicContentBlock{
 			Type:  "tool_use",
 			ID:    tc.ID,
 			Name:  tc.Function.Name,
-			Input: input,
+			Input: inputRaw,
 		})
 	}
-	return models.AnthropicMessage{Role: "assistant", Content: blocks}
+	return models.AnthropicMessage{Role: "assistant", Content: models.MustMarshal(blocks)}
 }
 
 func convertOpenAIToolToAnthropic(msg models.ChatMessage) models.AnthropicMessage {
-	content := contentToString(msg.Content)
+	content := models.ContentText(msg.Content)
 	return models.AnthropicMessage{
 		Role: "user",
-		Content: []models.AnthropicContentBlock{
+		Content: models.MustMarshal([]models.AnthropicContentBlock{
 			{
 				Type:      "tool_result",
 				ToolUseID: msg.ToolCallID,
-				Content:   content,
+				Content:   models.RawString(content),
 			},
-		},
+		}),
 	}
 }
 
-func convertOpenAIToolChoiceToAnthropic(choice any) any {
-	if choice == nil {
+func convertOpenAIToolChoiceToAnthropic(choice json.RawMessage) json.RawMessage {
+	if len(choice) == 0 {
 		return nil
 	}
-	switch v := choice.(type) {
-	case string:
-		switch v {
+	var s string
+	if json.Unmarshal(choice, &s) == nil {
+		switch s {
 		case "auto":
-			return map[string]any{"type": "auto"}
+			return models.MustMarshal(map[string]any{"type": "auto"})
 		case "required":
-			return map[string]any{"type": "any"}
+			return models.MustMarshal(map[string]any{"type": "any"})
 		case "none":
 			return nil
 		}
-	case map[string]any:
-		if fn, ok := v["function"].(map[string]any); ok {
+	}
+	var m map[string]any
+	if json.Unmarshal(choice, &m) == nil {
+		if fn, ok := m["function"].(map[string]any); ok {
 			if name, ok := fn["name"].(string); ok {
-				return map[string]any{
+				return models.MustMarshal(map[string]any{
 					"type": "tool",
 					"name": name,
-				}
+				})
 			}
 		}
 	}

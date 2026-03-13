@@ -11,6 +11,8 @@ import (
 
 // buildFrame constructs a valid AWS EventStream binary frame for testing.
 func buildFrame(headers map[string]string, payload []byte) []byte {
+	crc32cTable := crc32.MakeTable(crc32.Castagnoli)
+
 	// Encode headers
 	var headerBuf bytes.Buffer
 	for name, value := range headers {
@@ -27,12 +29,12 @@ func buildFrame(headers map[string]string, payload []byte) []byte {
 
 	var frame bytes.Buffer
 
-	// Prelude (12 bytes)
+	// Prelude (first 8 bytes)
 	binary.Write(&frame, binary.BigEndian, totalLen)
 	binary.Write(&frame, binary.BigEndian, headersLen)
-	// Prelude CRC
+	// Prelude CRC (over first 8 bytes)
 	prelude := frame.Bytes()
-	preludeCRC := crc32.ChecksumIEEE(prelude)
+	preludeCRC := crc32.Checksum(prelude, crc32cTable)
 	binary.Write(&frame, binary.BigEndian, preludeCRC)
 
 	// Headers
@@ -43,7 +45,7 @@ func buildFrame(headers map[string]string, payload []byte) []byte {
 
 	// Message CRC (over entire frame so far)
 	frameSoFar := frame.Bytes()
-	messageCRC := crc32.ChecksumIEEE(frameSoFar)
+	messageCRC := crc32.Checksum(frameSoFar, crc32cTable)
 	binary.Write(&frame, binary.BigEndian, messageCRC)
 
 	return frame.Bytes()

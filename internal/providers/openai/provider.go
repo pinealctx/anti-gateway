@@ -73,7 +73,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	if err != nil {
 		return nil, err
 	}
-	defer respBody.Close()
+	defer func() { _ = respBody.Close() }()
 
 	var resp models.ChatCompletionResponse
 	if err := json.NewDecoder(respBody).Decode(&resp); err != nil {
@@ -101,7 +101,7 @@ func (p *Provider) StreamCompletion(ctx context.Context, req *models.ChatComplet
 		stream <- providers.StreamChunk{Error: err}
 		return err
 	}
-	defer respBody.Close()
+	defer func() { _ = respBody.Close() }()
 
 	scanner := bufio.NewScanner(respBody)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
@@ -166,7 +166,7 @@ func (p *Provider) IsHealthy(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -207,14 +207,14 @@ func (p *Provider) doWithRetry(ctx context.Context, method, path string, body []
 
 		if resp.StatusCode >= 500 {
 			respBytes, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("upstream %d: %s", resp.StatusCode, string(respBytes))
 			continue
 		}
 
 		if resp.StatusCode >= 400 {
 			respBytes, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("upstream error %d: %s", resp.StatusCode, string(respBytes))
 		}
 
@@ -241,7 +241,7 @@ func (p *Provider) FetchModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		Data []struct {
@@ -275,7 +275,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 	if err != nil {
 		return nil, err
 	}
-	defer respBody.Close()
+	defer func() { _ = respBody.Close() }()
 
 	var resp models.EmbeddingResponse
 	if err := json.NewDecoder(respBody).Decode(&resp); err != nil {

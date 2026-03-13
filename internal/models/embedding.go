@@ -1,14 +1,41 @@
 package models
 
+import "encoding/json"
+
 // ========================
 // Embeddings types
 // ========================
 
 // EmbeddingRequest is the standard OpenAI /v1/embeddings request.
+// Ref: https://platform.openai.com/docs/api-reference/embeddings/create
 type EmbeddingRequest struct {
-	Input          any    `json:"input"` // string or []string
-	Model          string `json:"model"`
-	EncodingFormat string `json:"encoding_format,omitempty"` // "float" or "base64"
+	Model string          `json:"model"`
+	Input json.RawMessage `json:"input"` // string | []string | []int | [][]int
+
+	// Extras captures encoding_format, dimensions, user, and any future fields.
+	Extras map[string]json.RawMessage `json:"-"`
+}
+
+var embeddingRequestKnownFields = map[string]bool{
+	"model": true, "input": true,
+}
+
+func (r *EmbeddingRequest) UnmarshalJSON(data []byte) error {
+	type alias EmbeddingRequest
+	if err := json.Unmarshal(data, (*alias)(r)); err != nil {
+		return err
+	}
+	r.Extras = captureExtras(data, embeddingRequestKnownFields)
+	return nil
+}
+
+func (r EmbeddingRequest) MarshalJSON() ([]byte, error) {
+	type alias EmbeddingRequest
+	base, err := json.Marshal(alias(r))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtras(base, r.Extras)
 }
 
 // EmbeddingResponse is the standard OpenAI /v1/embeddings response.

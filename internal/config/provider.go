@@ -23,19 +23,20 @@ type ProviderConfig struct {
 }
 
 // GatewayConfig is the top-level YAML configuration.
+// Providers are managed at runtime via the Admin API and persisted in SQLite.
 type GatewayConfig struct {
-	Server    ServerConfig     `mapstructure:"server"`
-	Auth      AuthConfig       `mapstructure:"auth"`
-	Providers []ProviderConfig `mapstructure:"providers"`
-	Defaults  DefaultsConfig   `mapstructure:"defaults"`
-	Tenant    TenantConfig     `mapstructure:"tenant"`
+	Server   ServerConfig   `mapstructure:"server"`
+	Auth     AuthConfig     `mapstructure:"auth"`
+	Defaults DefaultsConfig `mapstructure:"defaults"`
+	Tenant   TenantConfig   `mapstructure:"tenant"`
 }
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	LogLevel string `mapstructure:"log_level"`
+	Host        string   `mapstructure:"host"`
+	Port        int      `mapstructure:"port"`
+	LogLevel    string   `mapstructure:"log_level"`
+	CORSOrigins []string `mapstructure:"cors_origins"` // Allowed CORS origins (empty = allow all)
 }
 
 // AuthConfig holds auth settings.

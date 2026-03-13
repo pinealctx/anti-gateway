@@ -61,7 +61,7 @@ func TestOpenAIToCW_SimpleUserMessage(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.ChatMessage{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: models.RawString("Hello")},
 		},
 	}
 	cw, err := OpenAIToCW(req, "arn:test")
@@ -88,8 +88,8 @@ func TestOpenAIToCW_SystemExtracted(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.ChatMessage{
-			{Role: "system", Content: "You are a helpful coder."},
-			{Role: "user", Content: "Write Go"},
+			{Role: "system", Content: models.RawString("You are a helpful coder.")},
+			{Role: "user", Content: models.RawString("Write Go")},
 		},
 	}
 	cw, err := OpenAIToCW(req, "")
@@ -113,7 +113,7 @@ func TestOpenAIToCW_NoNonSystemMessages_Error(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.ChatMessage{
-			{Role: "system", Content: "system only"},
+			{Role: "system", Content: models.RawString("system only")},
 		},
 	}
 	_, err := OpenAIToCW(req, "")
@@ -126,10 +126,10 @@ func TestOpenAIToCW_ToolsConverted(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.ChatMessage{
-			{Role: "user", Content: "use tool"},
+			{Role: "user", Content: models.RawString("use tool")},
 		},
 		Tools: []models.Tool{
-			{Type: "function", Function: models.ToolFunction{Name: "get_weather", Description: "Get weather", Parameters: map[string]any{"type": "object"}}},
+			{Type: "function", Function: models.ToolFunction{Name: "get_weather", Description: "Get weather", Parameters: models.MustMarshal(map[string]any{"type": "object"})}},
 			{Type: "function", Function: models.ToolFunction{Name: "web_search", Description: "Search web"}},
 		},
 	}
@@ -155,10 +155,10 @@ func TestOpenAIToCW_ToolResultTruncated(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.ChatMessage{
-			{Role: "user", Content: "call tool"},
-			{Role: "assistant", Content: "ok", ToolCalls: []models.ToolCall{{ID: "tc1", Type: "function", Function: models.ToolCallFunction{Name: "test", Arguments: "{}"}}}},
-			{Role: "tool", Content: longContent, ToolCallID: "tc1"},
-			{Role: "user", Content: "continue"},
+			{Role: "user", Content: models.RawString("call tool")},
+			{Role: "assistant", Content: models.RawString("ok"), ToolCalls: []models.ToolCall{{ID: "tc1", Type: "function", Function: models.ToolCallFunction{Name: "test", Arguments: "{}"}}}},
+			{Role: "tool", Content: models.RawString(longContent), ToolCallID: "tc1"},
+			{Role: "user", Content: models.RawString("continue")},
 		},
 	}
 	cw, err := OpenAIToCW(req, "")
@@ -180,11 +180,11 @@ func TestOpenAIToCW_MultiTurnHistory(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.ChatMessage{
-			{Role: "user", Content: "first"},
-			{Role: "assistant", Content: "response1"},
-			{Role: "user", Content: "second"},
-			{Role: "assistant", Content: "response2"},
-			{Role: "user", Content: "third"},
+			{Role: "user", Content: models.RawString("first")},
+			{Role: "assistant", Content: models.RawString("response1")},
+			{Role: "user", Content: models.RawString("second")},
+			{Role: "assistant", Content: models.RawString("response2")},
+			{Role: "user", Content: models.RawString("third")},
 		},
 	}
 	cw, err := OpenAIToCW(req, "")
@@ -207,7 +207,7 @@ func TestOpenAIToCW_MultiTurnHistory(t *testing.T) {
 // ============================================================
 
 func TestContentToString_String(t *testing.T) {
-	if got := contentToString("hello"); got != "hello" {
+	if got := contentToString(models.RawString("hello")); got != "hello" {
 		t.Errorf("contentToString(string) = %q, want hello", got)
 	}
 }
@@ -219,11 +219,11 @@ func TestContentToString_Nil(t *testing.T) {
 }
 
 func TestContentToString_ContentParts(t *testing.T) {
-	parts := []any{
+	parts := models.MustMarshal([]any{
 		map[string]any{"type": "text", "text": "part1"},
 		map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:..."}},
 		map[string]any{"type": "text", "text": "part2"},
-	}
+	})
 	got := contentToString(parts)
 	if got != "part1\npart2" {
 		t.Errorf("contentToString(parts) = %q, want part1\\npart2", got)
@@ -310,9 +310,9 @@ func TestConvertTools_TruncatesDescription(t *testing.T) {
 func TestAnthropicToOpenAI_SimpleText(t *testing.T) {
 	req := &models.AnthropicRequest{
 		Model:  "claude-opus-4.6",
-		System: "Be helpful",
+		System: models.RawString("Be helpful"),
 		Messages: []models.AnthropicMessage{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: models.RawString("Hello")},
 		},
 	}
 	got, err := AnthropicToOpenAI(req)
@@ -336,25 +336,22 @@ func TestAnthropicToOpenAI_SimpleText(t *testing.T) {
 
 func TestAnthropicToOpenAI_SystemBlocks(t *testing.T) {
 	// System as array of blocks
-	systemBlocks := []any{
+	systemBlocks := models.MustMarshal([]any{
 		map[string]any{"type": "text", "text": "Part 1"},
 		map[string]any{"type": "text", "text": "Part 2"},
-	}
+	})
 	req := &models.AnthropicRequest{
 		Model:  "claude-opus-4.6",
 		System: systemBlocks,
 		Messages: []models.AnthropicMessage{
-			{Role: "user", Content: "Hi"},
+			{Role: "user", Content: models.RawString("Hi")},
 		},
 	}
 	got, err := AnthropicToOpenAI(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	sysContent, ok := got.Messages[0].Content.(string)
-	if !ok {
-		t.Fatal("system content should be string")
-	}
+	sysContent := models.ContentText(got.Messages[0].Content)
 	if !strings.Contains(sysContent, "Part 1") || !strings.Contains(sysContent, "Part 2") {
 		t.Errorf("system should contain both parts, got %q", sysContent)
 	}
@@ -362,29 +359,35 @@ func TestAnthropicToOpenAI_SystemBlocks(t *testing.T) {
 
 func TestAnthropicToOpenAI_ToolChoice(t *testing.T) {
 	tests := []struct {
-		input any
-		want  any
+		input json.RawMessage
+		want  string
 	}{
-		{"auto", "auto"},
-		{"any", "required"},
-		{"none", "none"},
-		{nil, nil},
+		{models.RawString("auto"), "auto"},
+		{models.RawString("any"), "required"},
+		{models.RawString("none"), "none"},
+		{nil, ""},
 	}
 	for _, tc := range tests {
 		got := convertToolChoice(tc.input)
-		if got != tc.want {
-			t.Errorf("convertToolChoice(%v) = %v, want %v", tc.input, got, tc.want)
+		if tc.want == "" {
+			if got != nil {
+				t.Errorf("convertToolChoice(%v) = %s, want nil", tc.input, string(got))
+			}
+		} else {
+			var s string
+			json.Unmarshal(got, &s)
+			if s != tc.want {
+				t.Errorf("convertToolChoice(%s) = %s, want %s", string(tc.input), string(got), tc.want)
+			}
 		}
 	}
 }
 
 func TestAnthropicToOpenAI_ToolChoiceSpecific(t *testing.T) {
-	input := map[string]any{"type": "tool", "name": "my_func"}
+	input := models.MustMarshal(map[string]any{"type": "tool", "name": "my_func"})
 	got := convertToolChoice(input)
-	m, ok := got.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map, got %T", got)
-	}
+	var m map[string]any
+	json.Unmarshal(got, &m)
 	if m["type"] != "function" {
 		t.Errorf("type = %v, want function", m["type"])
 	}
@@ -396,7 +399,7 @@ func TestAnthropicToOpenAI_ToolChoiceSpecific(t *testing.T) {
 
 func TestAnthropicToOpenAI_AssistantWithToolCalls(t *testing.T) {
 	// Assistant message with tool_use blocks
-	blocks := []any{
+	blocks := models.MustMarshal([]any{
 		map[string]any{"type": "text", "text": "Let me search"},
 		map[string]any{
 			"type":  "tool_use",
@@ -404,11 +407,11 @@ func TestAnthropicToOpenAI_AssistantWithToolCalls(t *testing.T) {
 			"name":  "get_weather",
 			"input": map[string]any{"city": "Tokyo"},
 		},
-	}
+	})
 	req := &models.AnthropicRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.AnthropicMessage{
-			{Role: "user", Content: "Weather in Tokyo"},
+			{Role: "user", Content: models.RawString("Weather in Tokyo")},
 			{Role: "assistant", Content: blocks},
 		},
 	}
@@ -436,17 +439,17 @@ func TestAnthropicToOpenAI_AssistantWithToolCalls(t *testing.T) {
 
 func TestAnthropicToOpenAI_ToolResult(t *testing.T) {
 	// User message with tool_result block
-	blocks := []any{
+	resultBlocks := models.MustMarshal([]any{
 		map[string]any{
 			"type":        "tool_result",
 			"tool_use_id": "tu_1",
 			"content":     "25°C, sunny",
 		},
-	}
+	})
 	req := &models.AnthropicRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.AnthropicMessage{
-			{Role: "user", Content: blocks},
+			{Role: "user", Content: resultBlocks},
 		},
 	}
 	got, err := AnthropicToOpenAI(req)
@@ -470,10 +473,10 @@ func TestAnthropicToOpenAI_ToolsConverted(t *testing.T) {
 	req := &models.AnthropicRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.AnthropicMessage{
-			{Role: "user", Content: "hi"},
+			{Role: "user", Content: models.RawString("hi")},
 		},
 		Tools: []models.AnthropicTool{
-			{Name: "calc", Description: "Calculator", InputSchema: map[string]any{"type": "object"}},
+			{Name: "calc", Description: "Calculator", InputSchema: models.MustMarshal(map[string]any{"type": "object"})},
 		},
 	}
 	got, err := AnthropicToOpenAI(req)

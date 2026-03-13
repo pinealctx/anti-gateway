@@ -86,7 +86,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	if err != nil {
 		return nil, err
 	}
-	defer respBody.Close()
+	defer func() { _ = respBody.Close() }()
 
 	var anthResp models.AnthropicResponse
 	if err := json.NewDecoder(respBody).Decode(&anthResp); err != nil {
@@ -122,7 +122,7 @@ func (p *Provider) StreamCompletion(ctx context.Context, req *models.ChatComplet
 		stream <- providers.StreamChunk{Error: err}
 		return err
 	}
-	defer respBody.Close()
+	defer func() { _ = respBody.Close() }()
 
 	scanner := bufio.NewScanner(respBody)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
@@ -196,14 +196,14 @@ func (p *Provider) doWithRetry(ctx context.Context, body []byte) (io.ReadCloser,
 
 		if resp.StatusCode >= 500 || resp.StatusCode == 429 {
 			respBytes, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("anthropic %d: %s", resp.StatusCode, string(respBytes))
 			continue
 		}
 
 		if resp.StatusCode >= 400 {
 			respBytes, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("anthropic error %d: %s", resp.StatusCode, string(respBytes))
 		}
 
@@ -327,7 +327,7 @@ func convertAnthropicResponseToOpenAI(resp *models.AnthropicResponse, model stri
 				Index: 0,
 				Message: models.ChatMessage{
 					Role:      "assistant",
-					Content:   content,
+					Content:   models.RawString(content),
 					ToolCalls: toolCalls,
 				},
 				FinishReason: finishReason,

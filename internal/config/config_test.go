@@ -26,19 +26,9 @@ defaults:
   provider: "openai"
   model: "gpt-4o"
 
-providers:
-  - name: openai
-    type: openai
-    base_url: "https://api.openai.com/v1"
-    api_key: "sk-xxx"
-    weight: 3
-    models:
-      - gpt-4
-      - gpt-4o
-
-  - name: kiro
-    type: kiro
-    weight: 1
+tenant:
+  enabled: true
+  db_path: "test.db"
 `
 	path := writeTemp(t, "config.yaml", yaml)
 
@@ -64,30 +54,18 @@ providers:
 	if gw.Defaults.Provider != "openai" {
 		t.Errorf("default provider = %q", gw.Defaults.Provider)
 	}
-	if len(gw.Providers) != 2 {
-		t.Fatalf("providers count = %d", len(gw.Providers))
+	if !gw.Tenant.Enabled {
+		t.Error("tenant should be enabled")
 	}
-
-	openai := gw.Providers[0]
-	if openai.Name != "openai" || openai.Type != "openai" || openai.Weight != 3 {
-		t.Errorf("openai provider: %+v", openai)
-	}
-	if len(openai.Models) != 2 {
-		t.Errorf("openai models = %v", openai.Models)
-	}
-
-	kiro := gw.Providers[1]
-	if kiro.Name != "kiro" {
-		t.Errorf("kiro provider: %+v", kiro)
+	if gw.Tenant.DBPath != "test.db" {
+		t.Errorf("db_path = %q", gw.Tenant.DBPath)
 	}
 }
 
 func TestLoadFromFile_Defaults(t *testing.T) {
 	yaml := `
-providers:
-  - name: test
-    type: openai-compat
-    base_url: "http://localhost:8000/v1"
+defaults:
+  model: "test-model"
 `
 	path := writeTemp(t, "minimal.yaml", yaml)
 	cmd := newTestCmd()
@@ -109,12 +87,8 @@ providers:
 	if gw.Server.LogLevel != "info" {
 		t.Errorf("default log_level = %q", gw.Server.LogLevel)
 	}
-	if gw.Defaults.Model != "claude-opus-4.6" {
-		t.Errorf("default model = %q", gw.Defaults.Model)
-	}
-	// Weight default
-	if gw.Providers[0].Weight != 1 {
-		t.Errorf("default weight = %d", gw.Providers[0].Weight)
+	if gw.Defaults.Model != "test-model" {
+		t.Errorf("model = %q", gw.Defaults.Model)
 	}
 }
 
@@ -123,11 +97,6 @@ func TestLoadFromFile_CLIOverridesFile(t *testing.T) {
 server:
   host: "0.0.0.0"
   port: 9090
-
-providers:
-  - name: test
-    type: openai-compat
-    base_url: "http://localhost:8000/v1"
 `
 	path := writeTemp(t, "override.yaml", yaml)
 	cmd := newTestCmd()
@@ -168,11 +137,8 @@ func TestSynthesizeFromFlags(t *testing.T) {
 	if gw.Auth.APIKey != "my-key" {
 		t.Error("api key mismatch")
 	}
-	if gw.Defaults.Provider != "kiro" {
-		t.Errorf("should default to kiro, got %q", gw.Defaults.Provider)
-	}
-	if len(gw.Providers) != 1 || gw.Providers[0].Type != "kiro" {
-		t.Error("should synthesize a single kiro provider")
+	if gw.Defaults.Provider != "" {
+		t.Errorf("should default to empty provider, got %q", gw.Defaults.Provider)
 	}
 }
 

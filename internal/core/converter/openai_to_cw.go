@@ -157,7 +157,7 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 				toolUses := make([]models.CWToolUse, 0, len(msg.ToolCalls))
 				for _, tc := range msg.ToolCalls {
 					var input any
-					json.Unmarshal([]byte(tc.Function.Arguments), &input)
+					_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
 					toolUses = append(toolUses, models.CWToolUse{
 						ToolUseID: tc.ID,
 						Name:      tc.Function.Name,
@@ -255,42 +255,19 @@ func convertTools(tools []models.Tool) []models.CWTool {
 	return cwTools
 }
 
-// contentToString extracts text content from a ChatMessage.Content which can be string or []ContentPart.
-func contentToString(content any) string {
-	if content == nil {
-		return ""
-	}
-	switch v := content.(type) {
-	case string:
-		return v
-	case []any:
-		var parts []string
-		for _, part := range v {
-			if m, ok := part.(map[string]any); ok {
-				if t, ok := m["type"].(string); ok && t == "text" {
-					if text, ok := m["text"].(string); ok {
-						parts = append(parts, text)
-					}
-				}
-			}
-		}
-		return strings.Join(parts, "\n")
-	}
-	return fmt.Sprintf("%v", content)
+// contentToString extracts text content from a ChatMessage.Content (json.RawMessage).
+func contentToString(content json.RawMessage) string {
+	return models.ContentText(content)
 }
 
 // extractImages pulls image data from content parts and converts to CW format.
-func extractImages(content any) []models.CWImage {
-	arr, ok := content.([]any)
+func extractImages(content json.RawMessage) []models.CWImage {
+	parts, ok := models.ContentParts(content)
 	if !ok {
 		return nil
 	}
 	var images []models.CWImage
-	for _, part := range arr {
-		m, ok := part.(map[string]any)
-		if !ok {
-			continue
-		}
+	for _, m := range parts {
 		partType, _ := m["type"].(string)
 
 		switch partType {

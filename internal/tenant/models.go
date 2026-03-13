@@ -58,3 +58,36 @@ type UsageQuery struct {
 	To    time.Time // End time
 	Model string    // Filter by model
 }
+
+// ProviderRecord represents a persisted provider configuration.
+type ProviderRecord struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Type         string    `json:"type"` // "kiro", "openai", "openai-compat", "copilot", "anthropic"
+	Weight       int       `json:"weight"`
+	Enabled      bool      `json:"enabled"`
+	BaseURL      string    `json:"base_url,omitempty"`
+	APIKey       string    `json:"-"` // never expose in JSON
+	GithubTokens []string  `json:"-"` // never expose in JSON
+	Models       []string  `json:"models,omitempty"`
+	DefaultModel string    `json:"default_model,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ProviderOption is a functional option for configuring a ProviderRecord.
+type ProviderOption func(*ProviderRecord)
+
+func WithProviderType(t string) ProviderOption    { return func(p *ProviderRecord) { p.Type = t } }
+func WithProviderWeight(w int) ProviderOption     { return func(p *ProviderRecord) { p.Weight = w } }
+func WithProviderEnabled(e bool) ProviderOption   { return func(p *ProviderRecord) { p.Enabled = e } }
+func WithProviderBaseURL(u string) ProviderOption { return func(p *ProviderRecord) { p.BaseURL = u } }
+func WithProviderAPIKey(k string) ProviderOption  { return func(p *ProviderRecord) { p.APIKey = k } }
+func WithProviderGithubTokens(t []string) ProviderOption {
+	return func(p *ProviderRecord) { p.GithubTokens = t }
+}
+func WithProviderModels(m []string) ProviderOption { return func(p *ProviderRecord) { p.Models = m } }
+func WithProviderDefaultModel(m string) ProviderOption {
+	return func(p *ProviderRecord) { p.DefaultModel = m }
+}
+func WithProviderName(n string) ProviderOption { return func(p *ProviderRecord) { p.Name = n } }

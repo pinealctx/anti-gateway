@@ -137,7 +137,7 @@ func (am *KiroAuthManager) RemoveSession(id string) {
 			close(s.done)
 		}
 		if s.server != nil {
-			s.server.Close()
+			_ = s.server.Close()
 		}
 		delete(am.sessions, id)
 	}
@@ -175,7 +175,7 @@ func (am *KiroAuthManager) startCallbackServer(session *KiroLoginSession) error 
 				session.Error = "login timeout"
 			}
 			session.mu.Unlock()
-			session.server.Close()
+			_ = session.server.Close()
 		case <-session.done:
 		}
 	}()
@@ -289,7 +289,7 @@ func (am *KiroAuthManager) handleCallback(session *KiroLoginSession, w http.Resp
 		zap.Bool("has_token_endpoint", tokenResult.TokenEndpoint != ""))
 
 	close(session.done)
-	go session.server.Close()
+	go func() { _ = session.server.Close() }()
 
 	writeCallbackHTML(w, true, "")
 }
@@ -307,7 +307,7 @@ func (am *KiroAuthManager) exchangeCode(session *KiroLoginSession, code string) 
 	if err != nil {
 		return nil, fmt.Errorf("exchange request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 
@@ -334,16 +334,16 @@ func (am *KiroAuthManager) failSession(session *KiroLoginSession, errMsg string)
 	default:
 		close(session.done)
 	}
-	go session.server.Close()
+	go func() { _ = session.server.Close() }()
 }
 
 // writeCallbackHTML writes a response page for the browser after the OAuth callback.
 func writeCallbackHTML(w http.ResponseWriter, success bool, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if success {
-		fmt.Fprint(w, `<!DOCTYPE html><html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:system-ui;background:#0a0a0a;color:#fff"><div style="text-align:center"><h1 style="font-size:48px;margin:0">&#10004;</h1><h2>Login Successful</h2><p style="color:#888">You can close this page.</p></div></body></html>`)
+		_, _ = fmt.Fprint(w, `<!DOCTYPE html><html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:system-ui;background:#0a0a0a;color:#fff"><div style="text-align:center"><h1 style="font-size:48px;margin:0">&#10004;</h1><h2>Login Successful</h2><p style="color:#888">You can close this page.</p></div></body></html>`)
 	} else {
-		fmt.Fprintf(w, `<!DOCTYPE html><html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:system-ui;background:#0a0a0a;color:#fff"><div style="text-align:center"><h1 style="font-size:48px;margin:0">&#10008;</h1><h2>Login Failed</h2><p style="color:#888">%s</p></div></body></html>`, errMsg)
+		_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:system-ui;background:#0a0a0a;color:#fff"><div style="text-align:center"><h1 style="font-size:48px;margin:0">&#10008;</h1><h2>Login Failed</h2><p style="color:#888">%s</p></div></body></html>`, errMsg)
 	}
 }
 

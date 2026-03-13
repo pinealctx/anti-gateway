@@ -15,6 +15,7 @@ const (
 	CtxKeyTenantName      = "tenant_name"
 	CtxKeyAPIKey          = "api_key"
 	CtxKeyDefaultProvider = "default_provider"
+	CtxKeyRateLimiter     = "rate_limiter"
 )
 
 // TenantAuth returns middleware that authenticates requests against the tenant store.
@@ -69,10 +70,26 @@ func TenantAuth(store *tenant.Store, limiter *tenant.RateLimiter) gin.HandlerFun
 			}
 		}
 
+		// TPM rate limit pre-check (reject if already over budget)
+		if key.TPM > 0 && limiter != nil {
+			if !limiter.AllowTokens(key.ID, key.TPM, 0) {
+				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+					"error": gin.H{
+						"message": fmt.Sprintf("Token rate limit exceeded: %d TPM.", key.TPM),
+						"type":    "rate_limit_error",
+					},
+				})
+				return
+			}
+		}
+
 		// Set tenant context for downstream
 		c.Set(CtxKeyTenantID, key.ID)
 		c.Set(CtxKeyTenantName, key.Name)
 		c.Set(CtxKeyAPIKey, key)
+		if limiter != nil {
+			c.Set(CtxKeyRateLimiter, limiter)
+		}
 		if key.DefaultProvider != "" {
 			c.Set(CtxKeyDefaultProvider, key.DefaultProvider)
 		}
@@ -146,6 +163,24 @@ func GetDefaultProvider(c *gin.Context) string {
 		return ""
 	}
 	return v.(string)
+}
+
+// RecordTokenUsage records token consumption for TPM tracking.
+// Safe to call even when tenant auth is not enabled (no-op).
+func RecordTokenUsage(c *gin.Context, totalTokens int) {
+	if totalTokens <= 0 {
+		return
+	}
+	keyVal, _ := c.Get(CtxKeyAPIKey)
+	limiterVal, _ := c.Get(CtxKeyRateLimiter)
+	if keyVal == nil || limiterVal == nil {
+		return
+	}
+	key := keyVal.(*tenant.APIKey)
+	limiter := limiterVal.(*tenant.RateLimiter)
+	if key.TPM > 0 {
+		limiter.RecordTokens(key.ID, totalTokens)
+	}
 }
 
 // ExtractBearerToken extracts the Bearer token from Authorization or x-api-key headers.

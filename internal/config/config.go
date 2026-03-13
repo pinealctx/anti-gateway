@@ -105,13 +105,6 @@ func loadFromFile(path string, cmd *cobra.Command) (*GatewayConfig, error) {
 		gw.Defaults.Model = "claude-opus-4.6"
 	}
 
-	// Default enabled=true for providers without explicit setting
-	for i := range gw.Providers {
-		if gw.Providers[i].Weight == 0 {
-			gw.Providers[i].Weight = 1
-		}
-	}
-
 	return &gw, nil
 }
 
@@ -128,16 +121,7 @@ func synthesizeFromFlags(cmd *cobra.Command) *GatewayConfig {
 			APIKey: legacy.APIKey,
 		},
 		Defaults: DefaultsConfig{
-			Provider: "kiro",
-			Model:    legacy.DefaultModel,
-		},
-		Providers: []ProviderConfig{
-			{
-				Name:    "kiro",
-				Type:    "kiro",
-				Enabled: true,
-				Weight:  1,
-			},
+			Model: legacy.DefaultModel,
 		},
 	}
 }

@@ -97,7 +97,7 @@ func TestChatCompletion_Success(t *testing.T) {
 	p := testProvider(server.URL)
 	resp, err := p.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []models.ChatMessage{{Role: "user", Content: "Hello"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("Hello")}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestChatCompletion_Success(t *testing.T) {
 	if len(resp.Choices) == 0 {
 		t.Fatal("expected choices")
 	}
-	if resp.Choices[0].Message.Content != "Hello from Anthropic!" {
+	if models.ContentText(resp.Choices[0].Message.Content) != "Hello from Anthropic!" {
 		t.Errorf("content = %v", resp.Choices[0].Message.Content)
 	}
 	if resp.Choices[0].FinishReason != "stop" {
@@ -141,7 +141,7 @@ func TestChatCompletion_DefaultModel(t *testing.T) {
 	})
 
 	_, err := p.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
-		Messages: []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +158,7 @@ func TestChatCompletion_4xxError(t *testing.T) {
 	p := testProvider(server.URL)
 	_, err := p.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
 		Model:    "test",
-		Messages: []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 	})
 	if err == nil {
 		t.Error("should error on 400")
@@ -184,7 +184,7 @@ func TestStreamCompletion_Success(t *testing.T) {
 	err := p.StreamCompletion(context.Background(), &models.ChatCompletionRequest{
 		Model:    "test",
 		Stream:   true,
-		Messages: []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 	}, stream)
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +294,7 @@ func TestConvertResponse_TextOnly(t *testing.T) {
 	if len(result.Choices) != 1 {
 		t.Fatal("expected 1 choice")
 	}
-	if result.Choices[0].Message.Content != "Hello!" {
+	if models.ContentText(result.Choices[0].Message.Content) != "Hello!" {
 		t.Errorf("content = %v", result.Choices[0].Message.Content)
 	}
 	if result.Choices[0].FinishReason != "stop" {
@@ -313,7 +313,7 @@ func TestConvertResponse_WithToolUse(t *testing.T) {
 				Type:  "tool_use",
 				ID:    "tool_1",
 				Name:  "search",
-				Input: map[string]any{"q": "test"},
+				Input: models.MustMarshal(map[string]any{"q": "test"}),
 			},
 		},
 		StopReason: "tool_use",

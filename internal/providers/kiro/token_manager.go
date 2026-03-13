@@ -1,10 +1,12 @@
 package kiro
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +32,7 @@ type LoginToken struct {
 	TokenEndpoint string // e.g. https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
 	ExpiresAt     time.Time
 	IsExternalIdP bool
+	RefreshScope  string // extracted from JWT aud+scp at login time
 }
 
 // TokenManager manages Kiro tokens obtained from the built-in PKCE login flow.
@@ -52,6 +55,12 @@ func NewTokenManager(logger *zap.Logger) *TokenManager {
 func (tm *TokenManager) SetLoginToken(lt *LoginToken) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
+	if lt.RefreshScope == "" {
+		lt.RefreshScope = extractRefreshScope(lt.AccessToken)
+		if lt.RefreshScope != "" {
+			tm.logger.Info("extracted refresh scope from JWT", zap.String("scope", lt.RefreshScope))
+		}
+	}
 	tm.loginToken = lt
 	// Immediately set as current token
 	tm.current = &TokenInfo{
@@ -130,7 +139,9 @@ func (tm *TokenManager) tryLoginTokenRefresh() (*TokenInfo, error) {
 	form.Set("client_id", lt.ClientID)
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", lt.RefreshToken)
-	form.Set("scope", "openid profile offline_access")
+	if lt.RefreshScope != "" {
+		form.Set("scope", lt.RefreshScope)
+	}
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -145,13 +156,13 @@ func (tm *TokenManager) tryLoginTokenRefresh() (*TokenInfo, error) {
 		}
 
 		if resp.StatusCode >= 500 {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("login token refresh status: %d", resp.StatusCode)
 			continue
 		}
 
 		if resp.StatusCode != 200 {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("login token refresh status: %d", resp.StatusCode)
 		}
 
@@ -161,10 +172,10 @@ func (tm *TokenManager) tryLoginTokenRefresh() (*TokenInfo, error) {
 			ExpiresIn    int    `json:"expires_in"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("decode login token refresh: %w", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Update stored refresh token if a new one was issued
 		if result.RefreshToken != "" {
@@ -182,6 +193,52 @@ func (tm *TokenManager) tryLoginTokenRefresh() (*TokenInfo, error) {
 	}
 
 	return nil, fmt.Errorf("login token refresh failed after %d retries: %w", maxRetries, lastErr)
+}
+
+// extractRefreshScope parses the JWT access_token to build the correct OAuth2 scope
+// for token refresh. Azure AD requires resource-specific scopes (e.g.
+// api://app-id/permission) rather than generic OIDC scopes (openid profile),
+// otherwise the refreshed token's audience becomes client_id itself.
+// Returns empty string if extraction fails (caller should omit scope param).
+func extractRefreshScope(accessToken string) string {
+	parts := strings.SplitN(accessToken, ".", 3)
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Aud json.RawMessage `json:"aud"`
+		Scp string          `json:"scp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+
+	// aud can be a string or an array of strings
+	var aud string
+	if err := json.Unmarshal(claims.Aud, &aud); err != nil {
+		var auds []string
+		if err := json.Unmarshal(claims.Aud, &auds); err != nil || len(auds) == 0 {
+			return ""
+		}
+		aud = auds[0]
+	}
+
+	if aud == "" || claims.Scp == "" {
+		return ""
+	}
+
+	// Build: {aud}/{scope1} {aud}/{scope2} ... offline_access
+	scpItems := strings.Fields(claims.Scp)
+	result := make([]string, 0, len(scpItems)+1)
+	for _, s := range scpItems {
+		result = append(result, aud+"/"+s)
+	}
+	result = append(result, "offline_access")
+	return strings.Join(result, " ")
 }
 
 // StartBackgroundRefresh runs a goroutine that periodically refreshes the token.

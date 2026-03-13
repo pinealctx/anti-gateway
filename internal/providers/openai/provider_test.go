@@ -28,7 +28,7 @@ func TestChatCompletion_Success(t *testing.T) {
 		ID:    "chatcmpl-123",
 		Model: "gpt-4",
 		Choices: []models.ChatCompletionChoice{
-			{Index: 0, Message: models.ChatMessage{Role: "assistant", Content: "Hello!"}, FinishReason: "stop"},
+			{Index: 0, Message: models.ChatMessage{Role: "assistant", Content: models.RawString("Hello!")}, FinishReason: "stop"},
 		},
 		Usage: &models.Usage{PromptTokens: 5, CompletionTokens: 2, TotalTokens: 7},
 	}
@@ -54,7 +54,7 @@ func TestChatCompletion_Success(t *testing.T) {
 
 	got, err := p.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
 		Model:    "gpt-4",
-		Messages: []models.ChatMessage{{Role: "user", Content: "Hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -62,7 +62,7 @@ func TestChatCompletion_Success(t *testing.T) {
 	if got.ID != "chatcmpl-123" {
 		t.Errorf("id = %q, want chatcmpl-123", got.ID)
 	}
-	if len(got.Choices) != 1 || got.Choices[0].Message.Content != "Hello!" {
+	if len(got.Choices) != 1 || models.ContentText(got.Choices[0].Message.Content) != "Hello!" {
 		t.Error("unexpected response content")
 	}
 }
@@ -86,7 +86,7 @@ func TestChatCompletion_DefaultModel(t *testing.T) {
 	})
 
 	_, err := p.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
-		Messages: []models.ChatMessage{{Role: "user", Content: "Hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -102,7 +102,7 @@ func TestChatCompletion_ClientError(t *testing.T) {
 
 	p := NewProvider(Config{Name: "test", BaseURL: srv.URL, Logger: testLogger()})
 	_, err := p.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
-		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: "Hi"}},
+		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("Hi")}},
 	})
 	if err == nil {
 		t.Fatal("expected error on 400")
@@ -129,7 +129,7 @@ func TestChatCompletion_ServerErrorRetries(t *testing.T) {
 
 	p := NewProvider(Config{Name: "test", BaseURL: srv.URL, Logger: testLogger()})
 	got, err := p.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
-		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: "Hi"}},
+		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("should succeed after retries: %v", err)
@@ -174,7 +174,7 @@ func TestStreamCompletion_Success(t *testing.T) {
 	stream := make(chan providers.StreamChunk, 10)
 
 	err := p.StreamCompletion(context.Background(), &models.ChatCompletionRequest{
-		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: "Hi"}},
+		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("Hi")}},
 	}, stream)
 	if err != nil {
 		t.Fatalf("stream error: %v", err)
@@ -225,7 +225,7 @@ func TestStreamCompletion_ToolCalls(t *testing.T) {
 	stream := make(chan providers.StreamChunk, 10)
 
 	p.StreamCompletion(context.Background(), &models.ChatCompletionRequest{
-		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: "weather"}},
+		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("weather")}},
 	}, stream)
 
 	var gotTools bool
@@ -259,7 +259,7 @@ func TestStreamCompletion_MalformedChunk(t *testing.T) {
 	stream := make(chan providers.StreamChunk, 10)
 
 	err := p.StreamCompletion(context.Background(), &models.ChatCompletionRequest{
-		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: "Hi"}},
+		Model: "gpt-4", Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("Hi")}},
 	}, stream)
 	if err != nil {
 		t.Fatal("malformed chunk should be skipped, not error")

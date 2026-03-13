@@ -26,9 +26,7 @@ func ShouldAutoContinue(outputText string, inputMessages []models.ChatMessage) b
 	// Layer 2: Input/output ratio — if input >> output, it was likely input that filled context
 	inputLen := 0
 	for _, msg := range inputMessages {
-		if s, ok := msg.Content.(string); ok {
-			inputLen += utf8.RuneCountInString(s)
-		}
+		inputLen += utf8.RuneCountInString(models.ContentText(msg.Content))
 	}
 	outputLen := utf8.RuneCountInString(outputText)
 	if inputLen > outputLen*InputOutputRatioThreshold {
@@ -78,11 +76,11 @@ func BuildContinuationMessages(original []models.ChatMessage, outputSoFar string
 	msgs = append(msgs,
 		models.ChatMessage{
 			Role:    "assistant",
-			Content: outputSoFar,
+			Content: models.RawString(outputSoFar),
 		},
 		models.ChatMessage{
 			Role:    "user",
-			Content: ContinuationPrompt,
+			Content: models.RawString(ContinuationPrompt),
 		},
 	)
 	return msgs

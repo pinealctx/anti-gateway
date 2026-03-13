@@ -2,7 +2,6 @@ package copilot
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -95,7 +94,7 @@ func fetchVSCodeVersion(client *http.Client) string {
 	if err != nil {
 		return defaultVSCodeVersion
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
@@ -108,11 +107,6 @@ func fetchVSCodeVersion(client *http.Client) string {
 		return defaultVSCodeVersion
 	}
 	return string(matches[1])
-}
-
-// generateUUID creates a simple UUID v4.
-func generateUUID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
 // contextWithTimeout creates a context with timeout using context.Background.

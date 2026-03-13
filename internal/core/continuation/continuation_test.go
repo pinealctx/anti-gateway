@@ -23,7 +23,7 @@ func TestShouldAutoContinue_HighInputRatio_False(t *testing.T) {
 	// Input >> output (ratio > 8x)
 	output := strings.Repeat("x", 5000)
 	msgs := []models.ChatMessage{
-		{Role: "user", Content: strings.Repeat("y", 50000)},
+		{Role: "user", Content: models.RawString(strings.Repeat("y", 50000))},
 	}
 	if ShouldAutoContinue(output, msgs) {
 		t.Error("high input/output ratio should prevent continuation")
@@ -101,7 +101,7 @@ func TestShouldAutoContinue_EmptyAfterTrim_False(t *testing.T) {
 
 func TestBuildContinuationMessages(t *testing.T) {
 	original := []models.ChatMessage{
-		{Role: "user", Content: "Write a long essay"},
+		{Role: "user", Content: models.RawString("Write a long essay")},
 	}
 	got := BuildContinuationMessages(original, "partial output...")
 	if len(got) != 3 {
@@ -115,21 +115,21 @@ func TestBuildContinuationMessages(t *testing.T) {
 	if got[1].Role != "assistant" {
 		t.Error("second should be assistant")
 	}
-	if got[1].Content != "partial output..." {
-		t.Errorf("assistant content = %q", got[1].Content)
+	if models.ContentText(got[1].Content) != "partial output..." {
+		t.Errorf("assistant content = %q", models.ContentText(got[1].Content))
 	}
 	// Third: user with continuation prompt
 	if got[2].Role != "user" {
 		t.Error("third should be user")
 	}
-	if got[2].Content != ContinuationPrompt {
+	if models.ContentText(got[2].Content) != ContinuationPrompt {
 		t.Error("third should be continuation prompt")
 	}
 }
 
 func TestBuildContinuationMessages_DoesNotMutateOriginal(t *testing.T) {
 	original := []models.ChatMessage{
-		{Role: "user", Content: "hello"},
+		{Role: "user", Content: models.RawString("hello")},
 	}
 	origLen := len(original)
 	BuildContinuationMessages(original, "output")

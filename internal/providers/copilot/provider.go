@@ -127,7 +127,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	if err != nil {
 		return nil, err
 	}
-	defer respBody.Close()
+	defer func() { _ = respBody.Close() }()
 
 	var resp models.ChatCompletionResponse
 	if err := json.NewDecoder(respBody).Decode(&resp); err != nil {
@@ -153,7 +153,7 @@ func (p *Provider) StreamCompletion(ctx context.Context, req *models.ChatComplet
 		stream <- providers.StreamChunk{Error: err}
 		return err
 	}
-	defer respBody.Close()
+	defer func() { _ = respBody.Close() }()
 
 	scanner := bufio.NewScanner(respBody)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
@@ -329,7 +329,7 @@ func (p *Provider) doWithRetry(ctx context.Context, body []byte) (io.ReadCloser,
 
 		if resp.StatusCode == 429 {
 			// Rate limited — mark account as temporarily unhealthy
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			acc.mu.Lock()
 			acc.healthy = false
 			acc.mu.Unlock()
@@ -347,14 +347,14 @@ func (p *Provider) doWithRetry(ctx context.Context, body []byte) (io.ReadCloser,
 
 		if resp.StatusCode >= 500 {
 			respBytes, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("copilot %d: %s", resp.StatusCode, string(respBytes))
 			continue
 		}
 
 		if resp.StatusCode >= 400 {
 			respBytes, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("copilot error %d: %s", resp.StatusCode, string(respBytes))
 		}
 
@@ -461,7 +461,7 @@ func (p *Provider) FetchModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		Data []struct {
@@ -506,7 +506,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBytes, _ := io.ReadAll(resp.Body)

@@ -99,7 +99,7 @@ func (am *AuthManager) StartDeviceFlow() (*AuthSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("device code request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -218,7 +218,7 @@ func (am *AuthManager) exchangeDeviceCode(deviceCode string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		AccessToken string `json:"access_token"`
@@ -257,7 +257,7 @@ func RefreshCopilotToken(client *http.Client, githubToken, vsCodeVersion string)
 	if err != nil {
 		return nil, fmt.Errorf("copilot token request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -285,7 +285,7 @@ func FetchGithubUser(client *http.Client, githubToken, vsCodeVersion string) (*G
 	if err != nil {
 		return nil, fmt.Errorf("github user request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("github user request failed (%d)", resp.StatusCode)

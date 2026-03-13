@@ -146,7 +146,7 @@ func TestAuth_ValidBearer_Passes(t *testing.T) {
 		healthy: true,
 		response: &models.ChatCompletionResponse{
 			Choices: []models.ChatCompletionChoice{{
-				Message:      models.ChatMessage{Role: "assistant", Content: "hello"},
+				Message:      models.ChatMessage{Role: "assistant", Content: models.RawString("hello")},
 				FinishReason: "stop",
 			}},
 		},
@@ -168,7 +168,7 @@ func TestAuth_XAPIKey_Passes(t *testing.T) {
 		healthy: true,
 		response: &models.ChatCompletionResponse{
 			Choices: []models.ChatCompletionChoice{{
-				Message:      models.ChatMessage{Role: "assistant", Content: "hello"},
+				Message:      models.ChatMessage{Role: "assistant", Content: models.RawString("hello")},
 				FinishReason: "stop",
 			}},
 		},
@@ -190,7 +190,7 @@ func TestAuth_NoKeyConfigured_PassesAll(t *testing.T) {
 		healthy: true,
 		response: &models.ChatCompletionResponse{
 			Choices: []models.ChatCompletionChoice{{
-				Message:      models.ChatMessage{Role: "assistant", Content: "ok"},
+				Message:      models.ChatMessage{Role: "assistant", Content: models.RawString("ok")},
 				FinishReason: "stop",
 			}},
 		},
@@ -218,7 +218,7 @@ func TestOpenAI_ChatCompletions_NonStream(t *testing.T) {
 			Model: "claude-opus-4.6",
 			Choices: []models.ChatCompletionChoice{{
 				Index:        0,
-				Message:      models.ChatMessage{Role: "assistant", Content: "Hello there!"},
+				Message:      models.ChatMessage{Role: "assistant", Content: models.RawString("Hello there!")},
 				FinishReason: "stop",
 			}},
 		},
@@ -316,7 +316,7 @@ func TestAnthropic_Messages_NonStream(t *testing.T) {
 		name: "kiro",
 		response: &models.ChatCompletionResponse{
 			Choices: []models.ChatCompletionChoice{{
-				Message:      models.ChatMessage{Role: "assistant", Content: "Hi from Claude"},
+				Message:      models.ChatMessage{Role: "assistant", Content: models.RawString("Hi from Claude")},
 				FinishReason: "stop",
 			}},
 		},
@@ -397,8 +397,7 @@ func TestAnthropic_Messages_WithToolCalls(t *testing.T) {
 		response: &models.ChatCompletionResponse{
 			Choices: []models.ChatCompletionChoice{{
 				Message: models.ChatMessage{
-					Role:    "assistant",
-					Content: "",
+					Role: "assistant",
 					ToolCalls: []models.ToolCall{{
 						ID:   "call_1",
 						Type: "function",

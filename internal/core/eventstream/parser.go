@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 )
+
+// crc32c is the CRC-32C (Castagnoli) table used by AWS EventStream.
+var crc32c = crc32.MakeTable(crc32.Castagnoli)
 
 // Event represents a parsed AWS EventStream event.
 type Event struct {
@@ -29,7 +33,12 @@ func Parse(r io.Reader) (*Event, error) {
 
 	totalLen := binary.BigEndian.Uint32(prelude[0:4])
 	headersLen := binary.BigEndian.Uint32(prelude[4:8])
-	// prelude_crc at prelude[8:12] — skip CRC validation for now
+	preludeCRC := binary.BigEndian.Uint32(prelude[8:12])
+
+	// Validate prelude CRC (covers first 8 bytes)
+	if got := crc32.Checksum(prelude[:8], crc32c); got != preludeCRC {
+		return nil, fmt.Errorf("prelude CRC mismatch: got %08x, want %08x", got, preludeCRC)
+	}
 
 	if totalLen < 16 {
 		return nil, fmt.Errorf("invalid frame: total_length=%d too small", totalLen)
@@ -39,6 +48,15 @@ func Parse(r io.Reader) (*Event, error) {
 	remaining := make([]byte, totalLen-12)
 	if _, err := io.ReadFull(r, remaining); err != nil {
 		return nil, fmt.Errorf("read frame body: %w", err)
+	}
+
+	// Validate message CRC (covers prelude + headers + payload, i.e. everything except last 4 bytes)
+	messageCRC := binary.BigEndian.Uint32(remaining[len(remaining)-4:])
+	h := crc32.New(crc32c)
+	h.Write(prelude)
+	h.Write(remaining[:len(remaining)-4])
+	if got := h.Sum32(); got != messageCRC {
+		return nil, fmt.Errorf("message CRC mismatch: got %08x, want %08x", got, messageCRC)
 	}
 
 	// Parse headers

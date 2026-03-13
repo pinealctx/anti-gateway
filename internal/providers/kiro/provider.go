@@ -69,7 +69,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	// Use streaming internally and collect the full response
 	stream := make(chan providers.StreamChunk, 64)
 	go func() {
-		p.StreamCompletion(ctx, req, stream)
+		_ = p.StreamCompletion(ctx, req, stream)
 	}()
 
 	var fullContent string
@@ -103,7 +103,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 				Index: 0,
 				Message: models.ChatMessage{
 					Role:      "assistant",
-					Content:   fullContent,
+					Content:   models.RawString(fullContent),
 					ToolCalls: toolCalls,
 				},
 				FinishReason: finishReason,

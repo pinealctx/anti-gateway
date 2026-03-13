@@ -113,6 +113,13 @@ func (r *Registry) RegisterWithConfig(p AIProvider, weight int, modelList []stri
 	}
 }
 
+// Unregister removes a provider from the registry.
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.entries, name)
+}
+
 // Get returns a specific provider by name.
 func (r *Registry) Get(name string) (AIProvider, bool) {
 	r.mu.RLock()

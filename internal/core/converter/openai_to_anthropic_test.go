@@ -15,15 +15,15 @@ func TestOpenAIToAnthropic_SystemMessage(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "claude-opus-4.6",
 		Messages: []models.ChatMessage{
-			{Role: "system", Content: "You are helpful."},
-			{Role: "user", Content: "Hello"},
+			{Role: "system", Content: models.RawString("You are helpful.")},
+			{Role: "user", Content: models.RawString("Hello")},
 		},
 	}
 	result, err := OpenAIToAnthropic(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.System != "You are helpful." {
+	if models.ContentText(result.System) != "You are helpful." {
 		t.Errorf("System = %v, want 'You are helpful.'", result.System)
 	}
 	if len(result.Messages) != 1 {
@@ -37,7 +37,7 @@ func TestOpenAIToAnthropic_SystemMessage(t *testing.T) {
 func TestOpenAIToAnthropic_ModelPassthrough(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 	}
 	result, err := OpenAIToAnthropic(req)
 	if err != nil {
@@ -52,7 +52,7 @@ func TestOpenAIToAnthropic_StreamFlag(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model:    "test",
 		Stream:   true,
-		Messages: []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 	}
 	result, err := OpenAIToAnthropic(req)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestOpenAIToAnthropic_Temperature(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model:       "test",
 		Temperature: &temp,
-		Messages:    []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages:    []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 	}
 	result, err := OpenAIToAnthropic(req)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestOpenAIToAnthropic_MaxTokens(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model:     "test",
 		MaxTokens: &max,
-		Messages:  []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages:  []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 	}
 	result, err := OpenAIToAnthropic(req)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestOpenAIToAnthropic_MaxTokens(t *testing.T) {
 func TestOpenAIToAnthropic_DefaultMaxTokens(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model:    "test",
-		Messages: []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 	}
 	result, err := OpenAIToAnthropic(req)
 	if err != nil {
@@ -116,7 +116,7 @@ func TestOpenAIToAnthropic_DefaultMaxTokens(t *testing.T) {
 func TestOpenAIToAnthropic_SimpleUserMessage(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model:    "test",
-		Messages: []models.ChatMessage{{Role: "user", Content: "Hello world"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("Hello world")}},
 	}
 	result, err := OpenAIToAnthropic(req)
 	if err != nil {
@@ -130,7 +130,7 @@ func TestOpenAIToAnthropic_SimpleUserMessage(t *testing.T) {
 		t.Errorf("Role = %s, want user", msg.Role)
 	}
 	// Content should be string
-	if str, ok := msg.Content.(string); !ok || str != "Hello world" {
+	if models.ContentText(msg.Content) != "Hello world" {
 		t.Errorf("Content = %v, want 'Hello world'", msg.Content)
 	}
 }
@@ -142,7 +142,7 @@ func TestOpenAIToAnthropic_UserVisionMessage(t *testing.T) {
 		Messages: []models.ChatMessage{
 			{
 				Role: "user",
-				Content: []any{
+				Content: models.MustMarshal([]any{
 					map[string]any{"type": "text", "text": "What is this?"},
 					map[string]any{
 						"type": "image_url",
@@ -150,7 +150,7 @@ func TestOpenAIToAnthropic_UserVisionMessage(t *testing.T) {
 							"url": "data:image/png;base64,iVBOR",
 						},
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -162,9 +162,9 @@ func TestOpenAIToAnthropic_UserVisionMessage(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(result.Messages))
 	}
 	msg := result.Messages[0]
-	blocks, ok := msg.Content.([]models.AnthropicContentBlock)
+	blocks, ok := models.AnthropicBlocks(msg.Content)
 	if !ok {
-		t.Fatalf("Content should be []AnthropicContentBlock, got %T", msg.Content)
+		t.Fatalf("Content should be []AnthropicContentBlock, got %s", string(msg.Content))
 	}
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks, got %d", len(blocks))
@@ -194,8 +194,8 @@ func TestOpenAIToAnthropic_AssistantSimple(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "test",
 		Messages: []models.ChatMessage{
-			{Role: "user", Content: "hi"},
-			{Role: "assistant", Content: "Hello!"},
+			{Role: "user", Content: models.RawString("hi")},
+			{Role: "assistant", Content: models.RawString("Hello!")},
 		},
 	}
 	result, err := OpenAIToAnthropic(req)
@@ -205,7 +205,7 @@ func TestOpenAIToAnthropic_AssistantSimple(t *testing.T) {
 	if len(result.Messages) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
 	}
-	if str, ok := result.Messages[1].Content.(string); !ok || str != "Hello!" {
+	if models.ContentText(result.Messages[1].Content) != "Hello!" {
 		t.Errorf("assistant content = %v", result.Messages[1].Content)
 	}
 }
@@ -214,10 +214,10 @@ func TestOpenAIToAnthropic_AssistantWithToolCalls(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "test",
 		Messages: []models.ChatMessage{
-			{Role: "user", Content: "What's the weather?"},
+			{Role: "user", Content: models.RawString("What's the weather?")},
 			{
 				Role:    "assistant",
-				Content: "Let me check.",
+				Content: models.RawString("Let me check."),
 				ToolCalls: []models.ToolCall{
 					{
 						ID:   "call_123",
@@ -237,9 +237,9 @@ func TestOpenAIToAnthropic_AssistantWithToolCalls(t *testing.T) {
 	}
 
 	assistantMsg := result.Messages[1]
-	blocks, ok := assistantMsg.Content.([]models.AnthropicContentBlock)
+	blocks, ok := models.AnthropicBlocks(assistantMsg.Content)
 	if !ok {
-		t.Fatalf("Content should be blocks, got %T", assistantMsg.Content)
+		t.Fatalf("Content should be blocks, got %s", string(assistantMsg.Content))
 	}
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks (text + tool_use), got %d", len(blocks))
@@ -261,10 +261,8 @@ func TestOpenAIToAnthropic_AssistantWithToolCalls(t *testing.T) {
 		t.Errorf("tool_use name = %s", blocks[1].Name)
 	}
 	// Check input was parsed from JSON
-	inputMap, ok := blocks[1].Input.(map[string]any)
-	if !ok {
-		t.Fatalf("input should be map, got %T", blocks[1].Input)
-	}
+	var inputMap map[string]any
+	json.Unmarshal(blocks[1].Input, &inputMap)
 	if inputMap["city"] != "NYC" {
 		t.Errorf("input city = %v", inputMap["city"])
 	}
@@ -278,10 +276,10 @@ func TestOpenAIToAnthropic_ToolMessage(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "test",
 		Messages: []models.ChatMessage{
-			{Role: "user", Content: "hi"},
+			{Role: "user", Content: models.RawString("hi")},
 			{
 				Role:       "tool",
-				Content:    `{"temperature": 72}`,
+				Content:    models.RawString(`{"temperature": 72}`),
 				ToolCallID: "call_123",
 			},
 		},
@@ -295,9 +293,9 @@ func TestOpenAIToAnthropic_ToolMessage(t *testing.T) {
 	if toolMsg.Role != "user" {
 		t.Errorf("tool message role = %s, want user", toolMsg.Role)
 	}
-	blocks, ok := toolMsg.Content.([]models.AnthropicContentBlock)
+	blocks, ok := models.AnthropicBlocks(toolMsg.Content)
 	if !ok {
-		t.Fatalf("Content should be blocks, got %T", toolMsg.Content)
+		t.Fatalf("Content should be blocks, got %s", string(toolMsg.Content))
 	}
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(blocks))
@@ -323,14 +321,14 @@ func TestOpenAIToAnthropic_Tools(t *testing.T) {
 	}
 	req := &models.ChatCompletionRequest{
 		Model:    "test",
-		Messages: []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 		Tools: []models.Tool{
 			{
 				Type: "function",
 				Function: models.ToolFunction{
 					Name:        "get_weather",
 					Description: "Get weather info",
-					Parameters:  schema,
+					Parameters:  models.MustMarshal(schema),
 				},
 			},
 		},
@@ -361,53 +359,47 @@ func TestOpenAIToAnthropic_Tools(t *testing.T) {
 // ============================================================
 
 func TestConvertToolChoice_Auto(t *testing.T) {
-	result := convertOpenAIToolChoiceToAnthropic("auto")
-	m, ok := result.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map, got %T", result)
-	}
+	result := convertOpenAIToolChoiceToAnthropic(models.RawString("auto"))
+	var m map[string]any
+	json.Unmarshal(result, &m)
 	if m["type"] != "auto" {
 		t.Errorf("type = %v, want auto", m["type"])
 	}
 }
 
 func TestConvertToolChoice_Required(t *testing.T) {
-	result := convertOpenAIToolChoiceToAnthropic("required")
-	m, ok := result.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map, got %T", result)
-	}
+	result := convertOpenAIToolChoiceToAnthropic(models.RawString("required"))
+	var m map[string]any
+	json.Unmarshal(result, &m)
 	if m["type"] != "any" {
 		t.Errorf("type = %v, want any", m["type"])
 	}
 }
 
 func TestConvertToolChoice_None(t *testing.T) {
-	result := convertOpenAIToolChoiceToAnthropic("none")
+	result := convertOpenAIToolChoiceToAnthropic(models.RawString("none"))
 	if result != nil {
-		t.Errorf("none should return nil, got %v", result)
+		t.Errorf("none should return nil, got %s", string(result))
 	}
 }
 
 func TestConvertToolChoice_Nil(t *testing.T) {
 	result := convertOpenAIToolChoiceToAnthropic(nil)
 	if result != nil {
-		t.Errorf("nil should return nil, got %v", result)
+		t.Errorf("nil should return nil, got %s", string(result))
 	}
 }
 
 func TestConvertToolChoice_SpecificFunction(t *testing.T) {
-	choice := map[string]any{
+	choice := models.MustMarshal(map[string]any{
 		"type": "function",
 		"function": map[string]any{
 			"name": "get_weather",
 		},
-	}
+	})
 	result := convertOpenAIToolChoiceToAnthropic(choice)
-	m, ok := result.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map, got %T", result)
-	}
+	var m map[string]any
+	json.Unmarshal(result, &m)
 	if m["type"] != "tool" || m["name"] != "get_weather" {
 		t.Errorf("got %v", m)
 	}
@@ -434,14 +426,13 @@ func TestOpenAIToAnthropic_EmptyMessages(t *testing.T) {
 func TestOpenAIToAnthropic_NoSystem(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model:    "test",
-		Messages: []models.ChatMessage{{Role: "user", Content: "hi"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("hi")}},
 	}
 	result, err := OpenAIToAnthropic(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// System is `any` type — should be empty string (the converter sets string)
-	if result.System != nil && result.System != "" {
+	if len(result.System) > 0 && models.ContentText(result.System) != "" {
 		t.Errorf("System should be empty/nil, got %v", result.System)
 	}
 }
@@ -450,7 +441,7 @@ func TestOpenAIToAnthropic_AssistantEmptyToolCallArgs(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "test",
 		Messages: []models.ChatMessage{
-			{Role: "user", Content: "hi"},
+			{Role: "user", Content: models.RawString("hi")},
 			{
 				Role: "assistant",
 				ToolCalls: []models.ToolCall{
@@ -471,9 +462,9 @@ func TestOpenAIToAnthropic_AssistantEmptyToolCallArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	assistantMsg := result.Messages[1]
-	blocks, ok := assistantMsg.Content.([]models.AnthropicContentBlock)
+	blocks, ok := models.AnthropicBlocks(assistantMsg.Content)
 	if !ok {
-		t.Fatalf("expected blocks, got %T", assistantMsg.Content)
+		t.Fatalf("expected blocks, got %s", string(assistantMsg.Content))
 	}
 	// Empty arguments should default to empty object
 	if blocks[0].Input == nil {

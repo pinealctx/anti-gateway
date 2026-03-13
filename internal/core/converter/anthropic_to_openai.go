@@ -22,12 +22,12 @@ func AnthropicToOpenAI(req *models.AnthropicRequest) (*models.ChatCompletionRequ
 	var messages []models.ChatMessage
 
 	// 1. Convert system
-	if req.System != nil {
+	if len(req.System) > 0 {
 		sysText := extractSystemText(req.System)
 		if sysText != "" {
 			messages = append(messages, models.ChatMessage{
 				Role:    "system",
-				Content: sysText,
+				Content: models.RawString(sysText),
 			})
 		}
 	}
@@ -63,24 +63,27 @@ func AnthropicToOpenAI(req *models.AnthropicRequest) (*models.ChatCompletionRequ
 	return openaiReq, nil
 }
 
-func extractSystemText(system any) string {
-	switch v := system.(type) {
-	case string:
-		return v
-	case []any:
+func extractSystemText(system json.RawMessage) string {
+	if len(system) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(system, &s) == nil {
+		return s
+	}
+	var blocks []map[string]any
+	if json.Unmarshal(system, &blocks) == nil {
 		var parts []string
-		for _, block := range v {
-			if m, ok := block.(map[string]any); ok {
-				if t, ok := m["type"].(string); ok && t == "text" {
-					if text, ok := m["text"].(string); ok {
-						parts = append(parts, text)
-					}
+		for _, block := range blocks {
+			if t, ok := block["type"].(string); ok && t == "text" {
+				if text, ok := block["text"].(string); ok {
+					parts = append(parts, text)
 				}
 			}
 		}
 		return strings.Join(parts, "\n")
 	}
-	return fmt.Sprintf("%v", system)
+	return string(system)
 }
 
 func convertAnthropicMessage(msg models.AnthropicMessage) ([]models.ChatMessage, error) {
@@ -99,17 +102,17 @@ func convertAnthropicMessage(msg models.AnthropicMessage) ([]models.ChatMessage,
 func convertUserMessage(msg models.AnthropicMessage) []models.ChatMessage {
 	var msgs []models.ChatMessage
 
-	blocks := toContentBlocks(msg.Content)
-	if blocks == nil {
+	blocks, ok := models.AnthropicBlocks(msg.Content)
+	if !ok {
 		// Simple string content
 		return []models.ChatMessage{{
 			Role:    "user",
-			Content: fmt.Sprintf("%v", msg.Content),
+			Content: models.RawString(models.ContentText(msg.Content)),
 		}}
 	}
 
 	var textParts []string
-	var imageParts []any
+	var imageParts []map[string]any
 
 	for _, block := range blocks {
 		switch block.Type {
@@ -129,12 +132,12 @@ func convertUserMessage(msg models.AnthropicMessage) []models.ChatMessage {
 		case "tool_result":
 			// Convert to OpenAI tool message
 			content := ""
-			if block.Content != nil {
-				content = fmt.Sprintf("%v", block.Content)
+			if len(block.Content) > 0 {
+				content = models.ContentText(block.Content)
 			}
 			msgs = append(msgs, models.ChatMessage{
 				Role:       "tool",
-				Content:    content,
+				Content:    models.RawString(content),
 				ToolCallID: block.ToolUseID,
 			})
 		}
@@ -142,7 +145,7 @@ func convertUserMessage(msg models.AnthropicMessage) []models.ChatMessage {
 
 	if len(imageParts) > 0 {
 		// Multi-modal: combine text + images as content parts
-		var parts []any
+		var parts []map[string]any
 		if len(textParts) > 0 {
 			parts = append(parts, map[string]any{
 				"type": "text",
@@ -152,12 +155,12 @@ func convertUserMessage(msg models.AnthropicMessage) []models.ChatMessage {
 		parts = append(parts, imageParts...)
 		msgs = append([]models.ChatMessage{{
 			Role:    "user",
-			Content: parts,
+			Content: models.MustMarshal(parts),
 		}}, msgs...)
 	} else if len(textParts) > 0 {
 		msgs = append([]models.ChatMessage{{
 			Role:    "user",
-			Content: strings.Join(textParts, "\n"),
+			Content: models.RawString(strings.Join(textParts, "\n")),
 		}}, msgs...)
 	}
 
@@ -165,11 +168,11 @@ func convertUserMessage(msg models.AnthropicMessage) []models.ChatMessage {
 }
 
 func convertAssistantMessage(msg models.AnthropicMessage) models.ChatMessage {
-	blocks := toContentBlocks(msg.Content)
-	if blocks == nil {
+	blocks, ok := models.AnthropicBlocks(msg.Content)
+	if !ok {
 		return models.ChatMessage{
 			Role:    "assistant",
-			Content: fmt.Sprintf("%v", msg.Content),
+			Content: models.RawString(models.ContentText(msg.Content)),
 		}
 	}
 
@@ -197,7 +200,7 @@ func convertAssistantMessage(msg models.AnthropicMessage) models.ChatMessage {
 
 	result := models.ChatMessage{
 		Role:    "assistant",
-		Content: strings.Join(textParts, "\n"),
+		Content: models.RawString(strings.Join(textParts, "\n")),
 	}
 	if len(toolCalls) > 0 {
 		result.ToolCalls = toolCalls
@@ -205,53 +208,33 @@ func convertAssistantMessage(msg models.AnthropicMessage) models.ChatMessage {
 	return result
 }
 
-func convertToolChoice(choice any) any {
-	if choice == nil {
+func convertToolChoice(choice json.RawMessage) json.RawMessage {
+	if len(choice) == 0 {
 		return nil
 	}
-	switch v := choice.(type) {
-	case string:
-		switch v {
+	var s string
+	if json.Unmarshal(choice, &s) == nil {
+		switch s {
 		case "auto":
-			return "auto"
+			return models.MustMarshal("auto")
 		case "any":
-			return "required"
+			return models.MustMarshal("required")
 		case "none":
-			return "none"
+			return models.MustMarshal("none")
 		}
-	case map[string]any:
-		if t, ok := v["type"].(string); ok && t == "tool" {
-			if name, ok := v["name"].(string); ok {
-				return map[string]any{
+	}
+	var m map[string]any
+	if json.Unmarshal(choice, &m) == nil {
+		if t, ok := m["type"].(string); ok && t == "tool" {
+			if name, ok := m["name"].(string); ok {
+				return models.MustMarshal(map[string]any{
 					"type": "function",
 					"function": map[string]any{
 						"name": name,
 					},
-				}
+				})
 			}
 		}
 	}
 	return nil
-}
-
-// toContentBlocks attempts to parse content as []AnthropicContentBlock.
-func toContentBlocks(content any) []models.AnthropicContentBlock {
-	arr, ok := content.([]any)
-	if !ok {
-		return nil
-	}
-
-	var blocks []models.AnthropicContentBlock
-	for _, item := range arr {
-		data, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-		var block models.AnthropicContentBlock
-		if err := json.Unmarshal(data, &block); err != nil {
-			continue
-		}
-		blocks = append(blocks, block)
-	}
-	return blocks
 }

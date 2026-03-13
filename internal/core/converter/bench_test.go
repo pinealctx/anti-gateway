@@ -21,7 +21,7 @@ func BenchmarkOpenAIToCW_Simple(b *testing.B) {
 	req := &models.ChatCompletionRequest{
 		Model: "gpt-4",
 		Messages: []models.ChatMessage{
-			{Role: "user", Content: "Hello, how are you?"},
+			{Role: "user", Content: models.RawString("Hello, how are you?")},
 		},
 	}
 	b.ResetTimer()
@@ -32,12 +32,12 @@ func BenchmarkOpenAIToCW_Simple(b *testing.B) {
 
 func BenchmarkOpenAIToCW_LargeHistory(b *testing.B) {
 	msgs := make([]models.ChatMessage, 0, 102)
-	msgs = append(msgs, models.ChatMessage{Role: "system", Content: "You are a helpful assistant."})
+	msgs = append(msgs, models.ChatMessage{Role: "system", Content: models.RawString("You are a helpful assistant.")})
 	for i := 0; i < 50; i++ {
-		msgs = append(msgs, models.ChatMessage{Role: "user", Content: "Tell me about topic " + strings.Repeat("x", 200)})
-		msgs = append(msgs, models.ChatMessage{Role: "assistant", Content: "Here's info about topic " + strings.Repeat("y", 500)})
+		msgs = append(msgs, models.ChatMessage{Role: "user", Content: models.RawString("Tell me about topic " + strings.Repeat("x", 200))})
+		msgs = append(msgs, models.ChatMessage{Role: "assistant", Content: models.RawString("Here's info about topic " + strings.Repeat("y", 500))})
 	}
-	msgs = append(msgs, models.ChatMessage{Role: "user", Content: "final question"})
+	msgs = append(msgs, models.ChatMessage{Role: "user", Content: models.RawString("final question")})
 	req := &models.ChatCompletionRequest{Model: "gpt-4", Messages: msgs}
 
 	b.ResetTimer()
@@ -54,13 +54,13 @@ func BenchmarkOpenAIToCW_WithTools(b *testing.B) {
 			Function: models.ToolFunction{
 				Name:        "tool_" + strings.Repeat("a", 10),
 				Description: strings.Repeat("d", 500),
-				Parameters:  map[string]any{"type": "object"},
+				Parameters:  models.MustMarshal(map[string]any{"type": "object"}),
 			},
 		}
 	}
 	req := &models.ChatCompletionRequest{
 		Model:    "gpt-4",
-		Messages: []models.ChatMessage{{Role: "user", Content: "call a tool"}},
+		Messages: []models.ChatMessage{{Role: "user", Content: models.RawString("call a tool")}},
 		Tools:    tools,
 	}
 	b.ResetTimer()
@@ -74,7 +74,7 @@ func BenchmarkAnthropicToOpenAI(b *testing.B) {
 		Model:     "claude-sonnet-4-20250514",
 		MaxTokens: 1024,
 		Messages: []models.AnthropicMessage{
-			{Role: "user", Content: []models.AnthropicContentBlock{{Type: "text", Text: "Hello"}}},
+			{Role: "user", Content: models.MustMarshal([]models.AnthropicContentBlock{{Type: "text", Text: "Hello"}})},
 		},
 	}
 	b.ResetTimer()
