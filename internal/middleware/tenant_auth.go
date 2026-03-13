@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/SilkageNet/anti-gateway/internal/tenant"
+	"github.com/pinealctx/anti-gateway/internal/tenant"
 	"github.com/gin-gonic/gin"
 )
 

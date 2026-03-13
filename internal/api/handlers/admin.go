@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/SilkageNet/anti-gateway/internal/config"
-	"github.com/SilkageNet/anti-gateway/internal/core/providers"
-	"github.com/SilkageNet/anti-gateway/internal/tenant"
+	"github.com/pinealctx/anti-gateway/internal/config"
+	"github.com/pinealctx/anti-gateway/internal/core/providers"
+	"github.com/pinealctx/anti-gateway/internal/tenant"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )

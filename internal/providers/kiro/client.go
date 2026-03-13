@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/SilkageNet/anti-gateway/internal/core/eventstream"
-	"github.com/SilkageNet/anti-gateway/internal/models"
+	"github.com/pinealctx/anti-gateway/internal/core/eventstream"
+	"github.com/pinealctx/anti-gateway/internal/models"
 	"go.uber.org/zap"
 )
 
@@ -33,7 +33,11 @@ type CWClient struct {
 
 func NewCWClient(logger *zap.Logger) *CWClient {
 	return &CWClient{
-		client: &http.Client{Timeout: 5 * time.Minute},
+		client: &http.Client{
+			// Long read timeout for Claude Code sessions that can produce very long outputs.
+			// Connect/TLS handshake is bounded by the OS default (~30s).
+			Timeout: 2 * time.Hour,
+		},
 		logger: logger,
 	}
 }
@@ -92,6 +96,10 @@ func (c *CWClient) GenerateStream(ctx context.Context, cwReq *models.CWRequest, 
 
 		resp, err := c.client.Do(req)
 		if err != nil {
+			// Don't retry on context cancellation — client disconnected
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			lastErr = fmt.Errorf("cw request failed: %w", err)
 			continue // retry on network/timeout errors
 		}
@@ -168,25 +176,38 @@ func (c *CWClient) processStream(body io.ReadCloser, out chan<- CWStreamEvent) {
 			}
 
 		case "toolUseEvent":
-			// Streaming tool use: accumulate chunks
-			var evt models.CWToolUseEvent
-			if err := json.Unmarshal(raw.Payload, &evt); err != nil {
+			// Streaming tool use: accumulate chunks (use dynamic parsing like kiro-gateway)
+			var payload map[string]any
+			if err := json.Unmarshal(raw.Payload, &payload); err != nil {
+				c.logger.Warn("failed to parse toolUseEvent payload", zap.Error(err))
 				continue
 			}
-			if evt.Name != "" && evt.ToolUseID != "" {
-				// New tool
+
+			name, _ := payload["name"].(string)
+			toolUseID, _ := payload["toolUseId"].(string)
+			isStop, _ := payload["stop"].(bool)
+
+			if name != "" && toolUseID != "" && activeTool == nil {
 				activeTool = &struct {
 					ID       string
 					Name     string
 					InputBuf string
-				}{ID: evt.ToolUseID, Name: evt.Name}
+				}{ID: toolUseID, Name: name}
 			}
-			if activeTool != nil && evt.Input != "" {
-				activeTool.InputBuf += evt.Input
+			if inputStr, ok := payload["input"].(string); ok && inputStr != "" && activeTool != nil {
+				activeTool.InputBuf += inputStr
 			}
-			if evt.Stop && activeTool != nil {
-				var input any
-				_ = json.Unmarshal([]byte(activeTool.InputBuf), &input)
+			if isStop && activeTool != nil {
+				var input any = map[string]any{}
+				if activeTool.InputBuf != "" {
+					if err := json.Unmarshal([]byte(activeTool.InputBuf), &input); err != nil {
+						c.logger.Warn("failed to parse accumulated tool input JSON, using raw fallback",
+							zap.String("tool", activeTool.Name),
+							zap.Int("buf_len", len(activeTool.InputBuf)),
+							zap.Error(err))
+						input = map[string]any{"raw": activeTool.InputBuf}
+					}
+				}
 				out <- CWStreamEvent{
 					Type: "tool_use",
 					ToolUse: &CWToolUseAccumulator{

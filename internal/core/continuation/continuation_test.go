@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilkageNet/anti-gateway/internal/models"
+	"github.com/pinealctx/anti-gateway/internal/models"
 )
 
 // ============================================================

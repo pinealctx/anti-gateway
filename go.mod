@@ -1,4 +1,4 @@
-module github.com/SilkageNet/anti-gateway
+module github.com/pinealctx/anti-gateway
 
 go 1.25.5
 

@@ -46,7 +46,7 @@ export const getHealth = () => request<{ status: string; version: string }>("GET
 
 // --- Providers ---
 export interface ProviderRecord {
-  id: number;
+  id: string;
   name: string;
   type: string;
   weight: number;
@@ -63,16 +63,16 @@ export interface ProviderRecord {
 export const listProviders = () =>
   request<{ providers: ProviderRecord[]; total: number }>("GET", "/admin/providers");
 
-export const getProvider = (id: number) =>
+export const getProvider = (id: string) =>
   request<ProviderRecord>("GET", `/admin/providers/${id}`);
 
 export const createProvider = (data: Partial<ProviderRecord>) =>
   request<ProviderRecord>("POST", "/admin/providers", data);
 
-export const updateProvider = (id: number, data: Partial<ProviderRecord>) =>
+export const updateProvider = (id: string, data: Partial<ProviderRecord>) =>
   request<ProviderRecord>("PUT", `/admin/providers/${id}`, data);
 
-export const deleteProvider = (id: number) =>
+export const deleteProvider = (id: string) =>
   request<{ deleted: boolean }>("DELETE", `/admin/providers/${id}`);
 
 // --- API Keys ---

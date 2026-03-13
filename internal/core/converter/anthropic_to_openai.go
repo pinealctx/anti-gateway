@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/SilkageNet/anti-gateway/internal/models"
+	"github.com/pinealctx/anti-gateway/internal/models"
 )
 
 // AnthropicToOpenAI converts an Anthropic messages request to OpenAI chat completion format.

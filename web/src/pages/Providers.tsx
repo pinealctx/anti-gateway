@@ -107,7 +107,7 @@ export default function ProvidersPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     try {
       await deleteProvider(id);
       message.success("Provider 已删除");
@@ -118,7 +118,17 @@ export default function ProvidersPage() {
   };
 
   const columns: ColumnsType<ProviderRecord> = [
-    { title: "ID", dataIndex: "id", width: 60 },
+    {
+      title: "ID",
+      dataIndex: "id",
+      width: 200,
+      ellipsis: { showTitle: true },
+      render: (id: string) => (
+        <Typography.Text copyable={{ text: id }} style={{ fontSize: 12 }}>
+          {id ? id.slice(0, 8) + "..." : "—"}
+        </Typography.Text>
+      ),
+    },
     { title: "名称", dataIndex: "name", width: 150 },
     {
       title: "类型",

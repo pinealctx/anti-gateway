@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/SilkageNet/anti-gateway/internal/models"
+	"github.com/pinealctx/anti-gateway/internal/models"
 )
 
 // StreamChunk represents one piece of a streaming response.

@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/SilkageNet/anti-gateway/internal/core/providers"
-	"github.com/SilkageNet/anti-gateway/internal/models"
+	"github.com/pinealctx/anti-gateway/internal/core/providers"
+	"github.com/pinealctx/anti-gateway/internal/models"
 	"go.uber.org/zap"
 )
 

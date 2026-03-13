@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/SilkageNet/anti-gateway/internal/core/continuation"
-	"github.com/SilkageNet/anti-gateway/internal/core/converter"
-	"github.com/SilkageNet/anti-gateway/internal/core/providers"
-	"github.com/SilkageNet/anti-gateway/internal/core/streaming"
-	"github.com/SilkageNet/anti-gateway/internal/middleware"
-	"github.com/SilkageNet/anti-gateway/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/pinealctx/anti-gateway/internal/core/continuation"
+	"github.com/pinealctx/anti-gateway/internal/core/converter"
+	"github.com/pinealctx/anti-gateway/internal/core/providers"
+	"github.com/pinealctx/anti-gateway/internal/core/streaming"
+	"github.com/pinealctx/anti-gateway/internal/middleware"
+	"github.com/pinealctx/anti-gateway/internal/models"
 	"go.uber.org/zap"
 )
 
@@ -69,7 +69,26 @@ func (h *AnthropicHandler) Messages(c *gin.Context) {
 	}
 }
 
+// setAnthropicHeaders sets standard Anthropic response headers expected by Claude Code SDK.
+func setAnthropicHeaders(c *gin.Context, reqID string) {
+	c.Header("anthropic-version", "2023-06-01")
+	c.Header("request-id", reqID)
+	c.Header("x-request-id", reqID)
+}
+
+// estimateInputTokens provides a rough token estimate for message_start usage.
+func estimateInputTokens(messages []models.ChatMessage) int {
+	totalChars := 0
+	for _, msg := range messages {
+		totalChars += len(models.ContentText(msg.Content))
+	}
+	// ~4 chars per token + per-message overhead
+	return totalChars/4 + len(messages)*4
+}
+
 func (h *AnthropicHandler) handleNonStream(c *gin.Context, provider providers.AIProvider, req *models.ChatCompletionRequest, model, reqID string) {
+	setAnthropicHeaders(c, reqID)
+
 	resp, err := provider.ChatCompletion(c.Request.Context(), req)
 	if err != nil {
 		middleware.ErrorsTotal.WithLabelValues("provider").Inc()
@@ -130,17 +149,18 @@ func (h *AnthropicHandler) handleNonStream(c *gin.Context, provider providers.AI
 }
 
 func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIProvider, req *models.ChatCompletionRequest, model, reqID string) {
+	setAnthropicHeaders(c, reqID)
+
+	inputTokens := estimateInputTokens(req.Messages)
 	writer := streaming.NewAnthropicSSEWriter(c, model, reqID)
 
-	if err := writer.WriteMessageStart(); err != nil {
-		return
-	}
-	if err := writer.WriteContentBlockStart(); err != nil {
+	if err := writer.WriteMessageStart(inputTokens); err != nil {
 		return
 	}
 
 	var fullOutput string
-	hasTextContent := false
+	textStarted := false
+	textClosed := false
 	hasToolUse := false
 	continueCount := 0
 
@@ -148,20 +168,37 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 		stream := make(chan providers.StreamChunk, 64)
 		go func() {
 			if err := provider.StreamCompletion(c.Request.Context(), req, stream); err != nil {
-				h.logger.Error("stream completion error", zap.Error(err))
+				if c.Request.Context().Err() != nil {
+					h.logger.Debug("stream completion canceled (client disconnected)", zap.Error(err))
+				} else {
+					h.logger.Error("stream completion error", zap.Error(err))
+				}
 			}
 		}()
 
 		truncated := false
 		for chunk := range stream {
 			if chunk.Error != nil {
+				if c.Request.Context().Err() != nil {
+					h.logger.Debug("stream chunk error (client disconnected)", zap.Error(chunk.Error))
+					break
+				}
 				h.logger.Error("stream error", zap.Error(chunk.Error))
+				if !textStarted {
+					_ = writer.WriteContentBlockStart()
+					textStarted = true
+				}
 				_ = writer.WriteContentDelta("\n\n[Error: " + chunk.Error.Error() + "]")
 				break
 			}
 
 			if chunk.Content != "" {
-				hasTextContent = true
+				if !textStarted {
+					if err := writer.WriteContentBlockStart(); err != nil {
+						return
+					}
+					textStarted = true
+				}
 				fullOutput += chunk.Content
 				if err := writer.WriteContentDelta(chunk.Content); err != nil {
 					return
@@ -172,12 +209,12 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 				middleware.ToolCallsTotal.Add(float64(len(chunk.ToolCalls)))
 				hasToolUse = true
 
-				// Close text block if we had text content
-				if hasTextContent {
+				// Close text block if open
+				if textStarted && !textClosed {
 					if err := writer.WriteContentBlockStop(); err != nil {
 						return
 					}
-					hasTextContent = false
+					textClosed = true
 				}
 
 				for _, tc := range chunk.ToolCalls {
@@ -200,7 +237,7 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 			}
 		}
 
-		if truncated && continueCount < continuation.MaxContinuations && continuation.ShouldAutoContinue(fullOutput, req.Messages) {
+		if truncated && !hasToolUse && continueCount < continuation.MaxContinuations && continuation.ShouldAutoContinue(fullOutput, req.Messages) {
 			continueCount++
 			middleware.AutoContinueTriggered.Inc()
 			h.logger.Info("auto-continuing (anthropic)", zap.Int("round", continueCount))
@@ -211,8 +248,8 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 		break
 	}
 
-	// Close any remaining open text block
-	if hasTextContent && !hasToolUse {
+	// Close text block if still open
+	if textStarted && !textClosed {
 		_ = writer.WriteContentBlockStop()
 	}
 
@@ -220,7 +257,8 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 	if hasToolUse {
 		stopReason = "tool_use"
 	}
-	_ = writer.WriteMessageDelta(stopReason, 0)
+	outputTokens := len(fullOutput) / 4
+	_ = writer.WriteMessageDelta(stopReason, outputTokens)
 	_ = writer.WriteMessageStop()
 }
 

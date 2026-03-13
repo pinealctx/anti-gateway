@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/SilkageNet/anti-gateway/internal/models"
 	"github.com/gin-gonic/gin"
+	"github.com/pinealctx/anti-gateway/internal/models"
 )
 
 // OpenAISSEWriter writes OpenAI-compatible SSE chunks to a Gin response.
@@ -21,6 +21,7 @@ func NewOpenAISSEWriter(c *gin.Context, model, id string) *OpenAISSEWriter {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("Transfer-Encoding", "chunked")
+	c.Header("X-Accel-Buffering", "no")
 	return &OpenAISSEWriter{c: c, model: model, id: id}
 }
 
@@ -120,19 +121,22 @@ func NewAnthropicSSEWriter(c *gin.Context, model, id string) *AnthropicSSEWriter
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
 	return &AnthropicSSEWriter{c: c, model: model, id: id, blockIndex: 0}
 }
 
-func (w *AnthropicSSEWriter) WriteMessageStart() error {
+func (w *AnthropicSSEWriter) WriteMessageStart(inputTokens int) error {
 	return w.writeTypedEvent("message_start", map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
-			"id":      w.id,
-			"type":    "message",
-			"role":    "assistant",
-			"content": []any{},
-			"model":   w.model,
-			"usage":   map[string]any{"input_tokens": 0, "output_tokens": 0},
+			"id":            w.id,
+			"type":          "message",
+			"role":          "assistant",
+			"content":       []any{},
+			"model":         w.model,
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage":         map[string]any{"input_tokens": inputTokens, "output_tokens": 0},
 		},
 	})
 }
@@ -200,7 +204,8 @@ func (w *AnthropicSSEWriter) WriteMessageDelta(stopReason string, outputTokens i
 	return w.writeTypedEvent("message_delta", map[string]any{
 		"type": "message_delta",
 		"delta": map[string]any{
-			"stop_reason": stopReason,
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
 		},
 		"usage": map[string]any{
 			"output_tokens": outputTokens,

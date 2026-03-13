@@ -10,14 +10,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/SilkageNet/anti-gateway/internal/api/routes"
-	"github.com/SilkageNet/anti-gateway/internal/config"
-	"github.com/SilkageNet/anti-gateway/internal/core/providers"
-	anthropicProvider "github.com/SilkageNet/anti-gateway/internal/providers/anthropic"
-	copilotProvider "github.com/SilkageNet/anti-gateway/internal/providers/copilot"
-	"github.com/SilkageNet/anti-gateway/internal/providers/kiro"
-	openaiProvider "github.com/SilkageNet/anti-gateway/internal/providers/openai"
-	"github.com/SilkageNet/anti-gateway/internal/tenant"
+	"github.com/pinealctx/anti-gateway/internal/api/routes"
+	"github.com/pinealctx/anti-gateway/internal/config"
+	"github.com/pinealctx/anti-gateway/internal/core/providers"
+	anthropicProvider "github.com/pinealctx/anti-gateway/internal/providers/anthropic"
+	copilotProvider "github.com/pinealctx/anti-gateway/internal/providers/copilot"
+	"github.com/pinealctx/anti-gateway/internal/providers/kiro"
+	openaiProvider "github.com/pinealctx/anti-gateway/internal/providers/openai"
+	"github.com/pinealctx/anti-gateway/internal/tenant"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -182,7 +182,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 func createProvider(pc config.ProviderConfig, logger *zap.Logger) (providers.AIProvider, error) {
 	switch pc.Type {
 	case "kiro":
-		p := kiro.NewProvider(logger)
+		p := kiro.NewProvider(pc.Name, logger)
 		return p, nil
 
 	case "openai", "openai-compat":

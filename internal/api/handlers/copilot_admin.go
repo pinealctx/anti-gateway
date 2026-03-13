@@ -3,8 +3,8 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/SilkageNet/anti-gateway/internal/core/providers"
-	copilotProvider "github.com/SilkageNet/anti-gateway/internal/providers/copilot"
+	"github.com/pinealctx/anti-gateway/internal/core/providers"
+	copilotProvider "github.com/pinealctx/anti-gateway/internal/providers/copilot"
 	"github.com/gin-gonic/gin"
 )
 

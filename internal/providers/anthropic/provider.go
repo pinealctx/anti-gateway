@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SilkageNet/anti-gateway/internal/core/converter"
-	"github.com/SilkageNet/anti-gateway/internal/core/providers"
-	"github.com/SilkageNet/anti-gateway/internal/models"
+	"github.com/pinealctx/anti-gateway/internal/core/converter"
+	"github.com/pinealctx/anti-gateway/internal/core/providers"
+	"github.com/pinealctx/anti-gateway/internal/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )

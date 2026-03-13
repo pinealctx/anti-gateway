@@ -3,8 +3,8 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/SilkageNet/anti-gateway/internal/core/providers"
-	kiroProvider "github.com/SilkageNet/anti-gateway/internal/providers/kiro"
+	"github.com/pinealctx/anti-gateway/internal/core/providers"
+	kiroProvider "github.com/pinealctx/anti-gateway/internal/providers/kiro"
 	"github.com/gin-gonic/gin"
 )
 

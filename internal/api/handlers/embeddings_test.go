@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/SilkageNet/anti-gateway/internal/api/routes"
-	"github.com/SilkageNet/anti-gateway/internal/core/providers"
-	"github.com/SilkageNet/anti-gateway/internal/models"
+	"github.com/pinealctx/anti-gateway/internal/api/routes"
+	"github.com/pinealctx/anti-gateway/internal/core/providers"
+	"github.com/pinealctx/anti-gateway/internal/models"
 	"go.uber.org/zap"
 )
 

@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/SilkageNet/anti-gateway/internal/core/converter"
-	"github.com/SilkageNet/anti-gateway/internal/core/providers"
-	"github.com/SilkageNet/anti-gateway/internal/core/sanitizer"
-	"github.com/SilkageNet/anti-gateway/internal/models"
 	"github.com/google/uuid"
+	"github.com/pinealctx/anti-gateway/internal/core/converter"
+	"github.com/pinealctx/anti-gateway/internal/core/providers"
+	"github.com/pinealctx/anti-gateway/internal/core/sanitizer"
+	"github.com/pinealctx/anti-gateway/internal/models"
 	"go.uber.org/zap"
 )
 
@@ -24,6 +24,7 @@ const kvKeyKiroToken = "kiro:login_token"
 
 // Provider implements the AIProvider interface for Kiro/CodeWhisperer.
 type Provider struct {
+	name       string
 	tokenMgr   *TokenManager
 	client     *CWClient
 	authMgr    *KiroAuthManager
@@ -33,11 +34,12 @@ type Provider struct {
 }
 
 // NewProvider creates a Kiro provider using the built-in PKCE login flow.
-func NewProvider(logger *zap.Logger) *Provider {
+func NewProvider(name string, logger *zap.Logger) *Provider {
 	tm := NewTokenManager(logger)
 	tm.StartBackgroundRefresh(2 * time.Minute)
 
 	return &Provider{
+		name:     name,
 		tokenMgr: tm,
 		client:   NewCWClient(logger),
 		authMgr:  NewKiroAuthManager(logger),
@@ -166,7 +168,7 @@ func (p *Provider) TokenStatus() map[string]any {
 	return status
 }
 
-func (p *Provider) Name() string { return "kiro" }
+func (p *Provider) Name() string { return p.name }
 
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	// Use streaming internally and collect the full response
@@ -246,7 +248,14 @@ func (p *Provider) StreamCompletion(ctx context.Context, req *models.ChatComplet
 
 		case "tool_use":
 			if evt.ToolUse != nil && !sanitizer.IsBuiltinTool(evt.ToolUse.Name) {
-				inputJSON, _ := json.Marshal(evt.ToolUse.Input)
+				input := evt.ToolUse.Input
+				if input == nil {
+					input = map[string]any{}
+				}
+				inputJSON, err := json.Marshal(input)
+				if err != nil || string(inputJSON) == "null" {
+					inputJSON = []byte("{}")
+				}
 				stream <- providers.StreamChunk{
 					ToolCalls: []models.ToolCall{
 						{

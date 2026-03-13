@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/SilkageNet/anti-gateway/internal/core/sanitizer"
-	"github.com/SilkageNet/anti-gateway/internal/models"
 	"github.com/google/uuid"
+	"github.com/pinealctx/anti-gateway/internal/core/sanitizer"
+	"github.com/pinealctx/anti-gateway/internal/models"
 )
 
 // ModelMap maps various model aliases to CW model IDs.
@@ -160,8 +160,12 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 			if len(msg.ToolCalls) > 0 {
 				toolUses := make([]models.CWToolUse, 0, len(msg.ToolCalls))
 				for _, tc := range msg.ToolCalls {
-					var input any
-					_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
+					var input any = map[string]any{}
+					if tc.Function.Arguments != "" {
+						if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
+							input = map[string]any{}
+						}
+					}
 					toolUses = append(toolUses, models.CWToolUse{
 						ToolUseID: tc.ID,
 						Name:      tc.Function.Name,

@@ -3,7 +3,7 @@ package converter
 import (
 	"encoding/json"
 
-	"github.com/SilkageNet/anti-gateway/internal/models"
+	"github.com/pinealctx/anti-gateway/internal/models"
 )
 
 // OpenAIToAnthropic converts an OpenAI chat completion request to Anthropic messages format.

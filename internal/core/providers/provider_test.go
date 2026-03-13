@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SilkageNet/anti-gateway/internal/models"
+	"github.com/pinealctx/anti-gateway/internal/models"
 )
 
 // ============================================================
