@@ -157,8 +157,8 @@ func TestOpenAIToCW_ToolResultTruncated(t *testing.T) {
 		Messages: []models.ChatMessage{
 			{Role: "user", Content: models.RawString("call tool")},
 			{Role: "assistant", Content: models.RawString("ok"), ToolCalls: []models.ToolCall{{ID: "tc1", Type: "function", Function: models.ToolCallFunction{Name: "test", Arguments: "{}"}}}},
+			// Tool result as the trailing message (no user after it) → goes to current message
 			{Role: "tool", Content: models.RawString(longContent), ToolCallID: "tc1"},
-			{Role: "user", Content: models.RawString("continue")},
 		},
 	}
 	cw, err := OpenAIToCW(req, "")
@@ -199,6 +199,80 @@ func TestOpenAIToCW_MultiTurnHistory(t *testing.T) {
 	// Should have at least 6 history entries
 	if len(cw.ConversationState.History) < 6 {
 		t.Errorf("expected at least 6 history entries, got %d", len(cw.ConversationState.History))
+	}
+}
+
+func TestOpenAIToCW_TrailingToolResults(t *testing.T) {
+	// Claude Code scenario: assistant returns tool_use, client sends tool_result back
+	// Trailing tool messages → currentContent = "", toolResults in context
+	req := &models.ChatCompletionRequest{
+		Model: "claude-opus-4.6",
+		Messages: []models.ChatMessage{
+			{Role: "user", Content: models.RawString("list files")},
+			{Role: "assistant", Content: models.RawString(""), ToolCalls: []models.ToolCall{
+				{ID: "tc1", Type: "function", Function: models.ToolCallFunction{Name: "Bash", Arguments: `{"command":"ls"}`}},
+			}},
+			{Role: "tool", Content: models.RawString("file1.txt\nfile2.txt"), ToolCallID: "tc1"},
+		},
+		Tools: []models.Tool{
+			{Type: "function", Function: models.ToolFunction{Name: "Bash", Description: "Run bash", Parameters: json.RawMessage(`{}`)}},
+		},
+	}
+	cw, err := OpenAIToCW(req, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// currentContent should be empty (tool result mode)
+	if cw.ConversationState.CurrentMessage.UserInputMessage.Content != "" {
+		t.Errorf("expected empty content, got %q", cw.ConversationState.CurrentMessage.UserInputMessage.Content)
+	}
+	// Must have toolResults in context
+	ctx := cw.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext
+	if ctx == nil {
+		t.Fatal("expected UserInputMessageContext")
+	}
+	if len(ctx.ToolResults) != 1 {
+		t.Fatalf("expected 1 tool result, got %d", len(ctx.ToolResults))
+	}
+	if ctx.ToolResults[0].ToolUseID != "tc1" {
+		t.Errorf("tool use ID = %q, want tc1", ctx.ToolResults[0].ToolUseID)
+	}
+	// Must have tools in context (CW requires tools alongside toolResults)
+	if len(ctx.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(ctx.Tools))
+	}
+	// History: system pair + user entry + assistant with tool_use
+	if len(cw.ConversationState.History) < 3 {
+		t.Errorf("expected at least 3 history entries, got %d", len(cw.ConversationState.History))
+	}
+}
+
+func TestOpenAIToCW_HistoryPairing(t *testing.T) {
+	// Ensure unpaired user buffer in history gets a synthetic "OK" assistant reply
+	req := &models.ChatCompletionRequest{
+		Model: "claude-opus-4.6",
+		Messages: []models.ChatMessage{
+			{Role: "user", Content: models.RawString("first")},
+			{Role: "assistant", Content: models.RawString("response")},
+			{Role: "user", Content: models.RawString("second")},
+			{Role: "assistant", Content: models.RawString(""), ToolCalls: []models.ToolCall{
+				{ID: "tc1", Type: "function", Function: models.ToolCallFunction{Name: "test", Arguments: "{}"}},
+			}},
+			{Role: "tool", Content: models.RawString("result"), ToolCallID: "tc1"},
+		},
+	}
+	cw, err := OpenAIToCW(req, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hist := cw.ConversationState.History
+	// system pair (2) + user "first" (1) + assistant "response" (1) + user "second" (1) + assistant with tool_use (1) = 6
+	if len(hist) < 6 {
+		t.Errorf("expected at least 6 history entries, got %d", len(hist))
+	}
+	// Current message: tool result mode
+	if cw.ConversationState.CurrentMessage.UserInputMessage.Content != "" {
+		t.Errorf("expected empty content in tool result mode, got %q", cw.ConversationState.CurrentMessage.UserInputMessage.Content)
 	}
 }
 

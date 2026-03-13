@@ -114,45 +114,49 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 		return nil, fmt.Errorf("no non-system messages provided")
 	}
 
-	// Find where the tail begins (last contiguous user/tool messages)
-	tailStart := len(nonSystemMsgs) - 1
-	for tailStart > 0 {
-		role := nonSystemMsgs[tailStart].Role
-		if role != "user" && role != "tool" {
+	// Find the tail boundary:
+	// If trailing messages are tool role, they form the current toolResults
+	// Otherwise the last user message is the current message
+	trailingToolStart := len(nonSystemMsgs)
+	for i := len(nonSystemMsgs) - 1; i >= 0; i-- {
+		if nonSystemMsgs[i].Role == "tool" {
+			trailingToolStart = i
+		} else {
 			break
 		}
-		tailStart--
-	}
-	if nonSystemMsgs[tailStart].Role == "assistant" {
-		tailStart++ // tail starts after the last assistant
 	}
 
-	// Build paired history from non-system, non-tail messages
-	histMsgs := nonSystemMsgs[:tailStart]
-	for i := 0; i < len(histMsgs); i++ {
-		msg := histMsgs[i]
+	var histMsgs []models.ChatMessage
+	var tailMsgs []models.ChatMessage
+	if trailingToolStart < len(nonSystemMsgs) {
+		// Tool result mode: history is everything before the trailing tools
+		histMsgs = nonSystemMsgs[:trailingToolStart]
+		tailMsgs = nonSystemMsgs[trailingToolStart:]
+	} else {
+		// Normal mode: history is everything except the last message
+		if len(nonSystemMsgs) > 1 {
+			histMsgs = nonSystemMsgs[:len(nonSystemMsgs)-1]
+		}
+		tailMsgs = nonSystemMsgs[len(nonSystemMsgs)-1:]
+	}
+
+	// Build paired history: buffer user/tool messages, flush on assistant
+	var userBuffer []models.ChatMessage
+	for _, msg := range histMsgs {
 		switch msg.Role {
-		case "user":
-			entry := models.CWHistoryEntry{
-				UserInputMessage: &models.CWUserInputMessage{
-					Content: contentToString(msg.Content),
-					ModelID: modelID,
-					Origin:  "AI_EDITOR",
-				},
-			}
-			// Extract images
-			if images := extractImages(msg.Content); len(images) > 0 {
-				entry.UserInputMessage.Images = images
-			}
-			history = append(history, entry)
+		case "user", "tool":
+			userBuffer = append(userBuffer, msg)
 		case "assistant":
+			if len(userBuffer) > 0 {
+				history = append(history, buildHistoryUserEntry(userBuffer, modelID))
+				userBuffer = nil
+			}
 			entry := models.CWHistoryEntry{
 				AssistantResponseMessage: &models.CWAssistantResponseMessage{
 					MessageID: uuid.New().String(),
 					Content:   contentToString(msg.Content),
 				},
 			}
-			// Convert tool_calls if present
 			if len(msg.ToolCalls) > 0 {
 				toolUses := make([]models.CWToolUse, 0, len(msg.ToolCalls))
 				for _, tc := range msg.ToolCalls {
@@ -167,14 +171,21 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 				entry.AssistantResponseMessage.ToolUses = toolUses
 			}
 			history = append(history, entry)
-		case "tool":
-			// Tool results get attached to previous user message context
-			// or handled as part of current message below
 		}
+	}
+	// Flush remaining user buffer with a synthetic assistant reply
+	if len(userBuffer) > 0 {
+		history = append(history, buildHistoryUserEntry(userBuffer, modelID))
+		history = append(history, models.CWHistoryEntry{
+			AssistantResponseMessage: &models.CWAssistantResponseMessage{
+				MessageID: uuid.New().String(),
+				Content:   "OK",
+			},
+		})
+		userBuffer = nil
 	}
 
 	// 5. Build current message from tail
-	tailMsgs := nonSystemMsgs[tailStart:]
 	currentContent := ""
 	var toolResults []models.CWToolResult
 	var images []models.CWImage
@@ -215,7 +226,8 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 		ProfileArn: profileArn,
 	}
 
-	// Attach tools and tool results to current message context
+	// Always attach tools + toolResults to the current message context
+	// when either is present. CW requires tools to be sent alongside toolResults.
 	if len(cwTools) > 0 || len(toolResults) > 0 {
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext = &models.CWMessageContext{
 			Tools:       cwTools,
@@ -253,6 +265,58 @@ func convertTools(tools []models.Tool) []models.CWTool {
 		})
 	}
 	return cwTools
+}
+
+// buildHistoryUserEntry groups user and tool messages into a single CW history entry.
+func buildHistoryUserEntry(msgs []models.ChatMessage, modelID string) models.CWHistoryEntry {
+	var texts []string
+	var toolResults []models.CWToolResult
+	var images []models.CWImage
+
+	for _, msg := range msgs {
+		switch msg.Role {
+		case "user":
+			if t := contentToString(msg.Content); t != "" {
+				texts = append(texts, t)
+			}
+			if imgs := extractImages(msg.Content); len(imgs) > 0 {
+				images = append(images, imgs...)
+			}
+		case "tool":
+			text := contentToString(msg.Content)
+			if len(text) > 50000 {
+				text = text[:50000]
+			}
+			toolResults = append(toolResults, models.CWToolResult{
+				ToolUseID: msg.ToolCallID,
+				Content:   []models.CWToolResultContent{{Text: text}},
+				Status:    "success",
+			})
+		}
+	}
+
+	content := strings.Join(texts, "\n")
+	// When only tool results, CW still requires a content field
+	if content == "" && len(toolResults) > 0 {
+		content = ""
+	}
+
+	entry := models.CWHistoryEntry{
+		UserInputMessage: &models.CWUserInputMessage{
+			Content: content,
+			ModelID: modelID,
+			Origin:  "AI_EDITOR",
+		},
+	}
+	if len(images) > 0 {
+		entry.UserInputMessage.Images = images
+	}
+	if len(toolResults) > 0 {
+		entry.UserInputMessage.UserInputMessageContext = &models.CWMessageContext{
+			ToolResults: toolResults,
+		}
+	}
+	return entry
 }
 
 // contentToString extracts text content from a ChatMessage.Content (json.RawMessage).
