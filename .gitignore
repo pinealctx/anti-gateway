@@ -34,3 +34,6 @@ Thumbs.db
 *.dll
 *.so
 *.dylib
+
+# Build artifacts
+dist/
