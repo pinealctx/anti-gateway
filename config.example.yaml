@@ -1,0 +1,74 @@
+# AntiGateway Configuration Example
+# Copy to config.yaml and modify as needed.
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  log_level: "info"   # debug | info | warn | error
+
+auth:
+  api_key: ""          # Leave empty to disable auth; set to require Bearer token
+  admin_key: ""        # Separate key for /admin/* endpoints; leave empty = no admin auth
+
+defaults:
+  provider: "kiro"     # Fallback provider when model cannot be routed
+  model: "claude-opus-4.6"
+  lb_strategy: "smart" # weighted | round-robin | least-used | priority | smart
+
+# Multi-tenant mode: per-key auth, rate limiting, usage tracking
+tenant:
+  enabled: false       # Set to true to enable multi-tenant mode
+  db_path: "antigateway_tenant.db"  # SQLite DB for API keys and usage
+
+providers:
+  # Kiro provider (uses built-in PKCE login)
+  - name: kiro
+    type: kiro
+    enabled: true
+    weight: 1
+
+  # OpenAI official
+  - name: openai
+    type: openai
+    enabled: false
+    weight: 1
+    api_key: "sk-..."
+    models:
+      - gpt-4
+      - gpt-4o
+      - gpt-4o-mini
+      - o1
+      - o1-mini
+
+  # Any OpenAI-compatible endpoint (vLLM, Ollama, OneAPI, NewAPI, etc.)
+  - name: local-llm
+    type: openai-compat
+    enabled: false
+    weight: 1
+    base_url: "http://localhost:11434/v1"  # Ollama example
+    api_key: ""
+    default_model: "llama3"
+    models:
+      - llama3
+      - codellama
+
+  # GitHub Copilot (multi-account pool, 429-aware, auto token refresh)
+  - name: copilot
+    type: copilot
+    enabled: false
+    weight: 1
+    github_tokens:       # GitHub personal access tokens with Copilot access
+      - "ghu_xxxxxxxxxxxx"
+      - "ghu_yyyyyyyyyyyy"
+
+  # Anthropic native Messages API
+  - name: anthropic
+    type: anthropic
+    enabled: false
+    weight: 1
+    api_key: "sk-ant-..."
+    base_url: "https://api.anthropic.com"  # Optional, defaults to official API
+    models:
+      - claude-sonnet-4-20250514
+      - claude-opus-4-20250514
+      - claude-haiku-4-20250514
