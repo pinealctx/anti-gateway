@@ -1,5 +1,8 @@
 .PHONY: fmt lint build test check setup-hooks
 
+VERSION ?= dev
+LDFLAGS ?= -s -w -X github.com/pinealctx/anti-gateway/internal/config.Version=$(VERSION)
+
 fmt:
 	go fmt ./...
 
@@ -7,7 +10,7 @@ lint:
 	golangci-lint run
 
 build:
-	go build ./...
+	go build -ldflags "$(LDFLAGS)" ./...
 
 test:
 	go test ./...

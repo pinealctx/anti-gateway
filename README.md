@@ -1,6 +1,14 @@
 # AntiGateway
 
+[English](README.md) | [简体中文](README_CN.md)
+
 A unified AI gateway that provides a standardized interface for multiple LLM providers. AntiGateway accepts requests in OpenAI and Anthropic API formats and routes them to various upstream providers with protocol conversion, load balancing, and multi-tenant support.
+
+## Important Notice
+
+Kiro and GitHub Copilot provider support in this project is **unofficial** and intended for personal testing/research use.
+It may become invalid at any time due to upstream policy or protocol changes.
+If any related implementation affects your rights or interests, please contact the maintainer (or open an issue), and the related code can be removed promptly.
 
 ## Features
 
@@ -260,7 +268,21 @@ make test
 
 # Run all checks
 make check
+
+# Build with injected version
+make build VERSION=v0.3.0
 ```
+
+Version is injected at build time via ldflags:
+
+```bash
+go build -ldflags "-X github.com/pinealctx/anti-gateway/internal/config.Version=v0.3.0" -o antigateway ./cmd/server
+```
+
+## Release Automation
+
+GitHub Actions release workflow is configured to trigger on tags matching `v*.*.*`.
+During release build, the workflow injects the tag as the binary version through ldflags (no hardcoded release version in code).
 
 ### Frontend Development
 
@@ -323,6 +345,20 @@ Prometheus metrics available at `/metrics`:
 - `antigateway_tokens_total` - Token usage by provider, model, type (input/output)
 - `antigateway_provider_health` - Provider health status (1=healthy, 0=unhealthy)
 - `antigateway_rate_limit_hits_total` - Rate limit violations
+
+## Acknowledgements
+
+Thanks to the following related projects in this workspace:
+
+- AntiHub-ALL: https://github.com/zhongruan0522/AntiHub-ALL
+- copilot2api-go: https://github.com/StarryKira/copilot2api-go
+
+## Open Source License Compatibility
+
+- This project (`AntiGateway`) is licensed under **MIT**.
+- `copilot2api-go` is also **MIT**, which is generally compatible with this project's MIT licensing.
+- `AntiHub-ALL` uses **AGPL-3.0**. The current acknowledgement/reference does not change this project's MIT license by itself.
+- If AGPL-licensed source code is copied or distributed as part of this project in the future, AGPL obligations may apply to those parts (or the combined distribution). Please review before merging such changes.
 
 ## License
 

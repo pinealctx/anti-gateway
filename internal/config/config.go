@@ -9,7 +9,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-const Version = "0.2.0"
+// Version is injected at build time via:
+// -ldflags "-X github.com/pinealctx/anti-gateway/internal/config.Version=vX.Y.Z"
+// Default remains "dev" for local builds.
+var Version = "dev"
 
 // Config holds the resolved application configuration.
 type Config struct {

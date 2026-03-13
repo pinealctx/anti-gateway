@@ -28,3 +28,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Executables
+*.exe
+*.dll
+*.so
+*.dylib
