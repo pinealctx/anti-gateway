@@ -94,7 +94,7 @@ func (p *Provider) SetGithubToken(token string) {
 	p.mu.Unlock()
 
 	// Trigger immediate token refresh
-	go p.refreshToken()
+	go func() { _ = p.refreshToken() }()
 }
 
 // GetUsername returns the authenticated username.
@@ -110,8 +110,8 @@ func (p *Provider) GetTokenInfo() map[string]any {
 	defer p.mu.RUnlock()
 
 	info := map[string]any{
-		"username": p.username,
-		"healthy":  p.healthy,
+		"username":  p.username,
+		"healthy":   p.healthy,
 		"has_token": p.copilot != nil && p.copilot.token != "",
 	}
 	if p.copilot != nil {

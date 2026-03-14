@@ -82,9 +82,9 @@ type ProviderRecord struct {
 // ProviderOption is a functional option for configuring a ProviderRecord.
 type ProviderOption func(*ProviderRecord)
 
-func WithProviderType(t string) ProviderOption   { return func(p *ProviderRecord) { p.Type = t } }
-func WithProviderWeight(w int) ProviderOption    { return func(p *ProviderRecord) { p.Weight = w } }
-func WithProviderEnabled(e bool) ProviderOption  { return func(p *ProviderRecord) { p.Enabled = e } }
+func WithProviderType(t string) ProviderOption    { return func(p *ProviderRecord) { p.Type = t } }
+func WithProviderWeight(w int) ProviderOption     { return func(p *ProviderRecord) { p.Weight = w } }
+func WithProviderEnabled(e bool) ProviderOption   { return func(p *ProviderRecord) { p.Enabled = e } }
 func WithProviderBaseURL(u string) ProviderOption { return func(p *ProviderRecord) { p.BaseURL = u } }
 func WithProviderAPIKey(k string) ProviderOption  { return func(p *ProviderRecord) { p.APIKey = k } }
 func WithProviderGithubToken(t string) ProviderOption {
