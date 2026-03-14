@@ -45,6 +45,8 @@ type UsageRecord struct {
 type UsageSummary struct {
 	KeyID         string `json:"key_id"`
 	KeyName       string `json:"key_name"`
+	Model         string `json:"model,omitempty"`
+	Provider      string `json:"provider,omitempty"`
 	TotalRequests int64  `json:"total_requests"`
 	InputTokens   int64  `json:"input_tokens"`
 	OutputTokens  int64  `json:"output_tokens"`
@@ -53,10 +55,12 @@ type UsageSummary struct {
 
 // UsageQuery defines parameters for querying usage data.
 type UsageQuery struct {
-	KeyID string    // Filter by specific key
-	From  time.Time // Start time
-	To    time.Time // End time
-	Model string    // Filter by model
+	KeyID    string    // Filter by specific key
+	From     time.Time // Start time
+	To       time.Time // End time
+	Model    string    // Filter by model
+	Provider string    // Filter by provider
+	GroupBy  string    // Group by: "key" (default), "model", "provider", "key_model"
 }
 
 // ProviderRecord represents a persisted provider configuration.

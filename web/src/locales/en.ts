@@ -170,6 +170,10 @@ export default {
     expired: "Expired",
     noAccounts: "No authorized accounts",
     addFirst: "Add first account",
+    deleteSuccess: "Account deleted successfully",
+    deleteError: "Failed to delete account",
+    deleteConfirm: "Delete Copilot Account?",
+    deleteDesc: "This will remove {username} from the account pool",
   },
 
   kiro: {

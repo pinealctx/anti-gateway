@@ -98,8 +98,8 @@ export default function DashboardPage() {
 
         // Calculate usage totals
         const usageData = usage.usage ?? [];
-        const requests = usageData.reduce((acc, item) => acc + (item.requests || 0), 0);
-        const tokens = usageData.reduce((acc, item) => acc + (item.tokens || 0), 0);
+        const requests = usageData.reduce((acc, item) => acc + (item.total_requests || 0), 0);
+        const tokens = usageData.reduce((acc, item) => acc + (item.total_tokens || 0), 0);
         setTotalRequests(requests);
         setTotalTokens(tokens);
       } catch {

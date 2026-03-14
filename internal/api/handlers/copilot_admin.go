@@ -139,3 +139,31 @@ func (h *CopilotAdminHandler) ListAccounts(c *gin.Context) {
 		"total":    len(accounts),
 	})
 }
+
+// DeleteAccount removes a Copilot account from the pool.
+// DELETE /admin/copilot/accounts/:username
+func (h *CopilotAdminHandler) DeleteAccount(c *gin.Context) {
+	provider := h.findCopilotProvider()
+	if provider == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no copilot provider configured"})
+		return
+	}
+
+	username := c.Param("username")
+	if username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "username is required"})
+		return
+	}
+
+	if provider.RemoveAccount(username) {
+		c.JSON(http.StatusOK, gin.H{
+			"deleted":  true,
+			"username": username,
+		})
+	} else {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":    "account not found",
+			"username": username,
+		})
+	}
+}

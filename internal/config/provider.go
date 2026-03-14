@@ -47,9 +47,11 @@ type AuthConfig struct {
 
 // DefaultsConfig holds fallback settings.
 type DefaultsConfig struct {
-	Provider   string `mapstructure:"provider"`    // default provider name
-	Model      string `mapstructure:"model"`       // default model
-	LBStrategy string `mapstructure:"lb_strategy"` // load balancing strategy: weighted, round-robin, least-used, priority, smart
+	Provider           string `mapstructure:"provider"`             // default provider name
+	Model              string `mapstructure:"model"`                // default model
+	LBStrategy         string `mapstructure:"lb_strategy"`          // load balancing strategy: weighted, round-robin, least-used, priority, smart
+	HealthCheckEnabled bool   `mapstructure:"health_check_enabled"` // whether to run periodic health checks
+	HealthCheckSeconds int    `mapstructure:"health_check_seconds"` // health check interval in seconds (default 60)
 }
 
 // TenantConfig holds multi-tenant settings.

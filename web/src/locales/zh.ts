@@ -170,6 +170,10 @@ export default {
     expired: "已过期",
     noAccounts: "暂无授权账户",
     addFirst: "添加第一个账户",
+    deleteSuccess: "账户已删除",
+    deleteError: "删除账户失败",
+    deleteConfirm: "删除 Copilot 账户？",
+    deleteDesc: "将从账户池中移除 {username}",
   },
 
   kiro: {

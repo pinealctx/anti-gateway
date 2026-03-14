@@ -116,8 +116,18 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		)
 	}
 
-	// Start background health checks (every 30 seconds)
-	registry.StartHealthCheck(30 * time.Second)
+	// Start background health checks
+	healthCheckEnabled := gwCfg.Defaults.HealthCheckEnabled
+	if healthCheckEnabled {
+		healthCheckSeconds := gwCfg.Defaults.HealthCheckSeconds
+		if healthCheckSeconds <= 0 {
+			healthCheckSeconds = 60 // default 60 seconds
+		}
+		registry.StartHealthCheck(time.Duration(healthCheckSeconds) * time.Second)
+		logger.Info("Health check started", zap.Int("interval_seconds", healthCheckSeconds))
+	} else {
+		logger.Info("Health check disabled by config")
+	}
 
 	// Inject store into Kiro providers and restore persisted tokens
 	for _, p := range registry.All() {

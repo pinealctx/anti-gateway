@@ -107,6 +107,10 @@ func loadFromFile(path string, cmd *cobra.Command) (*GatewayConfig, error) {
 	if gw.Defaults.Model == "" {
 		gw.Defaults.Model = "claude-opus-4.6"
 	}
+	// Health check defaults to enabled with 60s interval
+	if gw.Defaults.HealthCheckSeconds == 0 {
+		gw.Defaults.HealthCheckSeconds = 60
+	}
 
 	return &gw, nil
 }
@@ -124,7 +128,9 @@ func synthesizeFromFlags(cmd *cobra.Command) *GatewayConfig {
 			APIKey: legacy.APIKey,
 		},
 		Defaults: DefaultsConfig{
-			Model: legacy.DefaultModel,
+			Model:              legacy.DefaultModel,
+			HealthCheckEnabled: true,  // default enabled
+			HealthCheckSeconds: 60,    // default 60 seconds
 		},
 	}
 }

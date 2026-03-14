@@ -107,6 +107,25 @@ func (p *Provider) AddAccount(githubToken string) {
 	p.logger.Info("Added Copilot account", zap.Int("total", len(p.accounts)))
 }
 
+// RemoveAccount removes a GitHub account from the pool by username.
+func (p *Provider) RemoveAccount(username string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for i, acc := range p.accounts {
+		acc.mu.RLock()
+		name := acc.Username
+		acc.mu.RUnlock()
+
+		if name == username {
+			p.accounts = append(p.accounts[:i], p.accounts[i+1:]...)
+			p.logger.Info("Removed Copilot account", zap.String("username", username), zap.Int("remaining", len(p.accounts)))
+			return true
+		}
+	}
+	return false
+}
+
 // AuthMgr returns the auth manager for device flow operations.
 func (p *Provider) AuthMgr() *AuthManager {
 	return p.authManager

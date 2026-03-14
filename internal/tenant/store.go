@@ -325,7 +325,7 @@ func (s *Store) RecordUsage(r *UsageRecord) error {
 	return err
 }
 
-// QueryUsage returns aggregated usage summaries.
+// QueryUsage returns aggregated usage summaries with flexible grouping.
 func (s *Store) QueryUsage(q UsageQuery) ([]UsageSummary, error) {
 	where := []string{"1=1"}
 	args := []any{}
@@ -346,16 +346,40 @@ func (s *Store) QueryUsage(q UsageQuery) ([]UsageSummary, error) {
 		where = append(where, "u.model = ?")
 		args = append(args, q.Model)
 	}
+	if q.Provider != "" {
+		where = append(where, "u.provider = ?")
+		args = append(args, q.Provider)
+	}
+
+	// Determine grouping based on GroupBy parameter
+	var selectFields, groupBy string
+	switch q.GroupBy {
+	case "model":
+		selectFields = "'' as key_id, '' as key_name, u.model, '' as provider"
+		groupBy = "u.model"
+	case "provider":
+		selectFields = "'' as key_id, '' as key_name, '' as model, u.provider"
+		groupBy = "u.provider"
+	case "key_model":
+		selectFields = "u.key_id, COALESCE(k.name, ''), u.model, '' as provider"
+		groupBy = "u.key_id, u.model"
+	case "key_provider":
+		selectFields = "u.key_id, COALESCE(k.name, ''), '' as model, u.provider"
+		groupBy = "u.key_id, u.provider"
+	default: // "key" or empty
+		selectFields = "u.key_id, COALESCE(k.name, ''), '' as model, '' as provider"
+		groupBy = "u.key_id"
+	}
 
 	query := fmt.Sprintf(`
-		SELECT u.key_id, COALESCE(k.name, ''), COUNT(*) as total_requests,
+		SELECT %s, COUNT(*) as total_requests,
 		       SUM(u.input_tokens), SUM(u.output_tokens), SUM(u.total_tokens)
 		FROM usage_records u
 		LEFT JOIN api_keys k ON u.key_id = k.id
 		WHERE %s
-		GROUP BY u.key_id
+		GROUP BY %s
 		ORDER BY total_requests DESC
-	`, strings.Join(where, " AND "))
+	`, selectFields, strings.Join(where, " AND "), groupBy)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -366,7 +390,7 @@ func (s *Store) QueryUsage(q UsageQuery) ([]UsageSummary, error) {
 	var results []UsageSummary
 	for rows.Next() {
 		var us UsageSummary
-		if err := rows.Scan(&us.KeyID, &us.KeyName, &us.TotalRequests, &us.InputTokens, &us.OutputTokens, &us.TotalTokens); err != nil {
+		if err := rows.Scan(&us.KeyID, &us.KeyName, &us.Model, &us.Provider, &us.TotalRequests, &us.InputTokens, &us.OutputTokens, &us.TotalTokens); err != nil {
 			return nil, err
 		}
 		results = append(results, us)

@@ -478,8 +478,10 @@ func (h *AdminHandler) activateProvider(rec *tenant.ProviderRecord) error {
 
 func (h *AdminHandler) GetUsage(c *gin.Context) {
 	q := tenant.UsageQuery{
-		KeyID: c.Query("key_id"),
-		Model: c.Query("model"),
+		KeyID:    c.Query("key_id"),
+		Model:    c.Query("model"),
+		Provider: c.Query("provider"),
+		GroupBy:  c.Query("group_by"),
 	}
 	if from := c.Query("from"); from != "" {
 		t, err := time.Parse(time.RFC3339, from)
@@ -505,12 +507,12 @@ func (h *AdminHandler) GetUsage(c *gin.Context) {
 		c.Header("Content-Type", "text/csv")
 		c.Header("Content-Disposition", "attachment; filename=usage.csv")
 		w := csv.NewWriter(c.Writer)
-		if err := w.Write([]string{"key_id", "key_name", "total_requests", "input_tokens", "output_tokens", "total_tokens"}); err != nil {
+		if err := w.Write([]string{"key_id", "key_name", "model", "provider", "total_requests", "input_tokens", "output_tokens", "total_tokens"}); err != nil {
 			return
 		}
 		for _, s := range summaries {
 			if err := w.Write([]string{
-				s.KeyID, s.KeyName,
+				s.KeyID, s.KeyName, s.Model, s.Provider,
 				fmt.Sprintf("%d", s.TotalRequests),
 				fmt.Sprintf("%d", s.InputTokens),
 				fmt.Sprintf("%d", s.OutputTokens),

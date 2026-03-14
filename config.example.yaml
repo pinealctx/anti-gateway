@@ -18,9 +18,11 @@ auth:
   admin_key: ""        # Separate key for /admin/* endpoints; leave empty = no admin auth
 
 defaults:
-  provider: ""         # Fallback provider name (empty = first registered provider)
+  provider: ""             # Fallback provider name (empty = first registered provider)
   model: "claude-opus-4.6"
-  lb_strategy: "smart" # weighted | round-robin | least-used | priority | smart
+  lb_strategy: "smart"     # weighted | round-robin | least-used | priority | smart
+  health_check_enabled: true   # Enable periodic provider health checks
+  health_check_seconds: 60     # Health check interval in seconds (default 60)
 
 # Multi-tenant mode: per-key auth, rate limiting, usage tracking.
 # The SQLite DB is always created (for provider storage); this flag

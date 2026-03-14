@@ -28,7 +28,7 @@ export default function UsageModal({ open, keyId, keyName, onClose }: Props) {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await getUsage(keyId ? { key_id: keyId } : undefined);
+      const res = await getUsage(keyId ? { key_id: String(keyId) } : undefined);
       setData(res.usage ?? []);
     } catch {
       // Error handled by empty state
@@ -50,16 +50,16 @@ export default function UsageModal({ open, keyId, keyName, onClose }: Props) {
       ellipsis: true,
       render: (v: string) => (
         <Tag color="blue" className="font-mono text-xs">
-          {v}
+          {v || "-"}
         </Tag>
       ),
     },
     {
       title: t.usage.requests,
-      dataIndex: "requests",
+      dataIndex: "total_requests",
       width: 100,
       align: "right",
-      sorter: (a, b) => a.requests - b.requests,
+      sorter: (a, b) => a.total_requests - b.total_requests,
       render: (v: number) => (
         <Text strong className="font-mono">
           {formatNumber(v)}
@@ -68,10 +68,10 @@ export default function UsageModal({ open, keyId, keyName, onClose }: Props) {
     },
     {
       title: t.usage.tokens,
-      dataIndex: "tokens",
+      dataIndex: "total_tokens",
       width: 120,
       align: "right",
-      sorter: (a, b) => a.tokens - b.tokens,
+      sorter: (a, b) => a.total_tokens - b.total_tokens,
       render: (v: number) => (
         <Text className="font-mono text-blue-500">{formatNumber(v)}</Text>
       ),
@@ -81,7 +81,7 @@ export default function UsageModal({ open, keyId, keyName, onClose }: Props) {
       width: 130,
       align: "right",
       render: (_, record) => {
-        const avg = record.requests > 0 ? Math.round(record.tokens / record.requests) : 0;
+        const avg = record.total_requests > 0 ? Math.round(record.total_tokens / record.total_requests) : 0;
         return <Text type="secondary" className="font-mono">{formatNumber(avg)}</Text>;
       },
     },
@@ -90,8 +90,8 @@ export default function UsageModal({ open, keyId, keyName, onClose }: Props) {
   // Calculate totals
   const totals = data.reduce(
     (acc, item) => ({
-      requests: acc.requests + (item.requests || 0),
-      tokens: acc.tokens + (item.tokens || 0),
+      requests: acc.requests + (item.total_requests || 0),
+      tokens: acc.tokens + (item.total_tokens || 0),
     }),
     { requests: 0, tokens: 0 }
   );

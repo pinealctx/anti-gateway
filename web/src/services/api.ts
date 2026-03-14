@@ -107,22 +107,29 @@ export const deleteKey = (id: number) =>
 
 // --- Usage ---
 export interface UsageRecord {
-  key_id: number;
+  key_id: string;
   key_name: string;
-  model: string;
-  requests: number;
-  tokens: number;
+  model?: string;
+  provider?: string;
+  total_requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
 }
 
 export const getUsage = (params?: {
-  key_id?: number;
+  key_id?: string;
   model?: string;
+  provider?: string;
+  group_by?: "key" | "model" | "provider" | "key_model" | "key_provider";
   from?: string;
   to?: string;
 }) => {
   const qs = new URLSearchParams();
-  if (params?.key_id) qs.set("key_id", String(params.key_id));
+  if (params?.key_id) qs.set("key_id", params.key_id);
   if (params?.model) qs.set("model", params.model);
+  if (params?.provider) qs.set("provider", params.provider);
+  if (params?.group_by) qs.set("group_by", params.group_by);
   if (params?.from) qs.set("from", params.from);
   if (params?.to) qs.set("to", params.to);
   const q = qs.toString();
@@ -157,6 +164,9 @@ export const completeDeviceFlow = (id: string) =>
 
 export const listCopilotAccounts = () =>
   request<{ accounts: CopilotAccount[]; total: number }>("GET", "/admin/copilot/accounts");
+
+export const deleteCopilotAccount = (username: string) =>
+  request<{ deleted: boolean; username: string }>("DELETE", `/admin/copilot/accounts/${encodeURIComponent(username)}`);
 
 // --- Kiro ---
 export interface KiroLoginSession {

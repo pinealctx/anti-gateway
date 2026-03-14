@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from "react";
-import { Modal, Typography, Button, Table, Tag, Space, App, Empty } from "antd";
-import { GithubOutlined, ReloadOutlined, PlusOutlined } from "@ant-design/icons";
+import { Modal, Typography, Button, Table, Tag, Space, App, Empty, Popconfirm } from "antd";
+import { GithubOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
   startDeviceFlow,
   pollDeviceFlow,
   completeDeviceFlow,
   listCopilotAccounts,
+  deleteCopilotAccount,
   type CopilotAccount,
   type DeviceFlowSession,
 } from "@/services/api";
@@ -89,6 +90,16 @@ export default function CopilotAuthModal({ open, providerName, onClose }: Props)
     onClose();
   };
 
+  const handleDeleteAccount = async (username: string) => {
+    try {
+      await deleteCopilotAccount(username);
+      message.success(t.copilot.deleteSuccess);
+      fetchAccounts();
+    } catch {
+      message.error(t.copilot.deleteError);
+    }
+  };
+
   const columns: ColumnsType<CopilotAccount> = [
     {
       title: t.copilot.username,
@@ -122,6 +133,20 @@ export default function CopilotAuthModal({ open, providerName, onClose }: Props)
         const isExpired = new Date(v) < new Date();
         return <Tag color={isExpired ? "red" : "green"}>{isExpired ? t.copilot.expired : v}</Tag>;
       },
+    },
+    {
+      title: "",
+      width: 60,
+      render: (_, record) => (
+        <Popconfirm
+          title={t.copilot.deleteConfirm}
+          description={t.copilot.deleteDesc.replace("{username}", record.username)}
+          onConfirm={() => handleDeleteAccount(record.username)}
+          okButtonProps={{ danger: true }}
+        >
+          <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+        </Popconfirm>
+      ),
     },
   ];
 
