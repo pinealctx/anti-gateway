@@ -5,6 +5,9 @@ node_modules/
 dist/
 dist-ssr/
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Logs
 *.log
 npm-debug.log*

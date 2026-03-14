@@ -13,8 +13,20 @@ import {
   App,
   Typography,
   Popconfirm,
+  Empty,
+  Tooltip,
+  Card,
 } from "antd";
-import { PlusOutlined, ReloadOutlined } from "@ant-design/icons";
+import {
+  PlusOutlined,
+  ReloadOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  GithubOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
   listProviders,
@@ -23,6 +35,11 @@ import {
   deleteProvider,
   type ProviderRecord,
 } from "@/services/api";
+import CopilotAuthModal from "@/components/CopilotAuthModal";
+import KiroAuthModal from "@/components/KiroAuthModal";
+import { useT } from "@/locales";
+
+const { Title, Text } = Typography;
 
 const PROVIDER_TYPES = [
   { label: "Kiro", value: "kiro" },
@@ -32,6 +49,15 @@ const PROVIDER_TYPES = [
   { label: "Anthropic", value: "anthropic" },
 ];
 
+// Status Badge Component
+function StatusBadge({ status, label }: { status: boolean; label: string }) {
+  return (
+    <span className={`status-badge ${status ? "success" : "error"}`}>
+      {label}
+    </span>
+  );
+}
+
 export default function ProvidersPage() {
   const [data, setData] = useState<ProviderRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -39,6 +65,12 @@ export default function ProvidersPage() {
   const [editing, setEditing] = useState<ProviderRecord | null>(null);
   const [form] = Form.useForm();
   const { message } = App.useApp();
+  const t = useT();
+
+  // Auth modal states
+  const [copilotModalOpen, setCopilotModalOpen] = useState(false);
+  const [kiroModalOpen, setKiroModalOpen] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<ProviderRecord | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -46,11 +78,11 @@ export default function ProvidersPage() {
       const res = await listProviders();
       setData(res.providers);
     } catch {
-      message.error("加载 Provider 列表失败");
+      message.error(t.providers.loadError);
     } finally {
       setLoading(false);
     }
-  }, [message]);
+  }, [message, t]);
 
   useEffect(() => {
     fetchData();
@@ -71,6 +103,16 @@ export default function ProvidersPage() {
       github_tokens: record.github_tokens?.join("\n") ?? "",
     });
     setModalOpen(true);
+  };
+
+  const openCopilotAuth = (record: ProviderRecord) => {
+    setSelectedProvider(record);
+    setCopilotModalOpen(true);
+  };
+
+  const openKiroAuth = (record: ProviderRecord) => {
+    setSelectedProvider(record);
+    setKiroModalOpen(true);
   };
 
   const handleSubmit = async () => {
@@ -95,10 +137,10 @@ export default function ProvidersPage() {
 
       if (editing) {
         await updateProvider(editing.id, payload);
-        message.success("Provider 已更新");
+        message.success(t.providers.updateSuccess);
       } else {
         await createProvider(payload);
-        message.success("Provider 已创建");
+        message.success(t.providers.createSuccess);
       }
       setModalOpen(false);
       fetchData();
@@ -110,69 +152,144 @@ export default function ProvidersPage() {
   const handleDelete = async (id: string) => {
     try {
       await deleteProvider(id);
-      message.success("Provider 已删除");
+      message.success(t.providers.deleteSuccess);
       fetchData();
     } catch {
-      message.error("删除失败");
+      message.error(t.providers.deleteError);
     }
   };
 
   const columns: ColumnsType<ProviderRecord> = [
     {
-      title: "ID",
+      title: t.common.id,
       dataIndex: "id",
-      width: 200,
-      ellipsis: { showTitle: true },
+      width: 100,
       render: (id: string) => (
-        <Typography.Text copyable={{ text: id }} style={{ fontSize: 12 }}>
-          {id ? id.slice(0, 8) + "..." : "—"}
-        </Typography.Text>
+        <Tooltip title={id}>
+          <Tag
+            className="font-mono text-xs cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={() => {
+              navigator.clipboard.writeText(id);
+              message.success(t.common.copied);
+            }}
+          >
+            {id ? id.slice(0, 8) : "—"}
+          </Tag>
+        </Tooltip>
       ),
     },
-    { title: "名称", dataIndex: "name", width: 150 },
     {
-      title: "类型",
-      dataIndex: "type",
-      width: 120,
-      render: (t: string) => <Tag>{t}</Tag>,
+      title: t.common.name,
+      dataIndex: "name",
+      width: 200,
+      render: (name: string) => <Text strong>{name}</Text>,
     },
-    { title: "权重", dataIndex: "weight", width: 80 },
     {
-      title: "启用",
+      title: t.common.type,
+      dataIndex: "type",
+      width: 110,
+      render: (type: string) => (
+        <Tag color="blue" className="font-mono text-xs">
+          {type}
+        </Tag>
+      ),
+    },
+    {
+      title: t.providers.fieldWeight,
+      dataIndex: "weight",
+      width: 80,
+      align: "center",
+      render: (v: number) => <Text code>{v}</Text>,
+    },
+    {
+      title: t.common.enabled,
       dataIndex: "enabled",
       width: 80,
-      render: (v: boolean) =>
-        v ? <Tag color="green">是</Tag> : <Tag color="red">否</Tag>,
+      align: "center",
+      render: (v: boolean) => <StatusBadge status={v} label={v ? t.common.yes : t.common.no} />,
     },
     {
-      title: "健康",
+      title: t.common.status,
       dataIndex: "healthy",
       width: 80,
+      align: "center",
       render: (v: boolean) =>
-        v ? <Tag color="green">健康</Tag> : <Tag color="red">异常</Tag>,
+        v ? (
+          <Tooltip title={t.providers.healthy}>
+            <CheckCircleOutlined className="text-green-500 text-lg" />
+          </Tooltip>
+        ) : (
+          <Tooltip title={t.providers.unhealthy}>
+            <CloseCircleOutlined className="text-red-400 text-lg" />
+          </Tooltip>
+        ),
     },
     {
-      title: "模型",
+      title: t.providers.fieldModels,
       dataIndex: "models",
       ellipsis: true,
       render: (models: string[]) =>
-        models?.length ? models.map((m) => <Tag key={m}>{m}</Tag>) : <Tag>所有</Tag>,
+        models?.length ? (
+          <div className="flex flex-wrap gap-1">
+            {models.slice(0, 3).map((m) => (
+              <Tag key={m} className="text-xs">
+                {m}
+              </Tag>
+            ))}
+            {models.length > 3 && (
+              <Tag className="text-xs">+{models.length - 3}</Tag>
+            )}
+          </div>
+        ) : (
+          <Tag>{t.common.all}</Tag>
+        ),
     },
     {
-      title: "操作",
-      width: 150,
+      title: t.common.actions,
+      ellipsis: true,
+      fixed: "right",
       render: (_, record) => (
-        <Space>
-          <Button type="link" size="small" onClick={() => openEdit(record)}>
-            编辑
-          </Button>
+        <Space size="small">
+          {/* Type-specific auth actions */}
+          {record.type === "copilot" && (
+            <Tooltip title={t.copilot.addAccount}>
+              <Button
+                type="link"
+                size="small"
+                icon={<GithubOutlined />}
+                onClick={() => openCopilotAuth(record)}
+                className="text-purple-500"
+              >
+                {t.providers.authorize}
+              </Button>
+            </Tooltip>
+          )}
+          {record.type === "kiro" && (
+            <Tooltip title={t.kiro.pkceLogin}>
+              <Button
+                type="link"
+                size="small"
+                icon={<ThunderboltOutlined />}
+                onClick={() => openKiroAuth(record)}
+                className="text-orange-500"
+              >
+                {t.providers.authorize}
+              </Button>
+            </Tooltip>
+          )}
+          <Button
+            type="text"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => openEdit(record)}
+          />
           <Popconfirm
-            title="确定删除此 Provider?"
+            title={t.providers.deleteConfirm}
+            description={t.providers.deleteDesc}
             onConfirm={() => handleDelete(record.id)}
+            okButtonProps={{ danger: true }}
           >
-            <Button type="link" size="small" danger>
-              删除
-            </Button>
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
@@ -183,57 +300,75 @@ export default function ProvidersPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <Typography.Title level={4} className="!mb-0">
-          Provider 管理
-        </Typography.Title>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <Title level={4} className="!mb-0">
+          {t.providers.title}
+        </Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
-            刷新
+            {t.common.refresh}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            添加 Provider
+            {t.providers.addProvider}
           </Button>
         </Space>
       </div>
 
-      <Table
-        rowKey="id"
-        columns={columns}
-        dataSource={data}
-        loading={loading}
-        pagination={false}
-        size="middle"
-      />
+      <Card className="overflow-hidden">
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={data}
+          loading={loading}
+          pagination={false}
+          size="middle"
+          scroll={{ x: 600 }}
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={t.empty.noProviders}
+              >
+                <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                  {t.empty.createFirstProvider}
+                </Button>
+              </Empty>
+            ),
+          }}
+        />
+      </Card>
 
+      {/* Provider Form Modal */}
       <Modal
-        title={editing ? "编辑 Provider" : "添加 Provider"}
+        title={editing ? t.providers.editProvider : t.providers.addProvider}
         open={modalOpen}
         onOk={handleSubmit}
         onCancel={() => setModalOpen(false)}
+        okText={editing ? t.common.save : t.common.create}
+        cancelText={t.common.cancel}
         width={560}
         destroyOnClose
       >
         <Form form={form} layout="vertical" className="mt-4">
           <Form.Item
             name="name"
-            label="名称"
-            rules={[{ required: true, message: "请输入名称" }]}
+            label={t.providers.fieldName}
+            rules={[{ required: true, message: t.common.required }]}
           >
-            <Input placeholder="my-provider" disabled={!!editing} />
+            <Input placeholder={t.providers.fieldNamePlaceholder} disabled={!!editing} />
           </Form.Item>
           <Form.Item
             name="type"
-            label="类型"
-            rules={[{ required: true, message: "请选择类型" }]}
+            label={t.providers.fieldType}
+            rules={[{ required: true, message: t.common.required }]}
           >
-            <Select options={PROVIDER_TYPES} placeholder="选择 Provider 类型" disabled={!!editing} />
+            <Select options={PROVIDER_TYPES} placeholder={t.providers.fieldTypePlaceholder} disabled={!!editing} />
           </Form.Item>
-          <Form.Item name="weight" label="权重">
+          <Form.Item name="weight" label={t.providers.fieldWeight} tooltip={t.providers.fieldWeightTooltip}>
             <InputNumber min={0} max={10000} className="w-full" />
           </Form.Item>
           {editing && (
-            <Form.Item name="enabled" label="启用" valuePropName="checked">
+            <Form.Item name="enabled" label={t.providers.fieldEnabled} valuePropName="checked">
               <Switch />
             </Form.Item>
           )}
@@ -241,27 +376,57 @@ export default function ProvidersPage() {
             selectedType === "openai-compat" ||
             selectedType === "anthropic") && (
             <>
-              <Form.Item name="base_url" label="Base URL">
-                <Input placeholder="https://api.openai.com/v1" />
+              <Form.Item name="base_url" label={t.providers.fieldBaseUrl}>
+                <Input placeholder={t.providers.fieldBaseUrlPlaceholder} />
               </Form.Item>
-              <Form.Item name="api_key" label="API Key">
-                <Input.Password placeholder="sk-..." />
+              <Form.Item name="api_key" label={t.providers.fieldApiKey}>
+                <Input.Password placeholder={t.providers.fieldApiKeyPlaceholder} />
               </Form.Item>
             </>
           )}
           {selectedType === "copilot" && (
-            <Form.Item name="github_tokens" label="GitHub Tokens（每行一个）">
-              <Input.TextArea rows={3} placeholder="gho_xxx&#10;gho_yyy" />
+            <Form.Item
+              name="github_tokens"
+              label={t.providers.fieldGithubTokens}
+              tooltip={t.providers.fieldGithubTokensTooltip}
+            >
+              <Input.TextArea rows={3} placeholder={t.providers.fieldGithubTokensPlaceholder} />
             </Form.Item>
           )}
-          <Form.Item name="models" label="模型（逗号分隔，留空=所有）">
-            <Input placeholder="gpt-4, claude-sonnet-4-20250514" />
+          <Form.Item name="models" label={t.providers.fieldModels}>
+            <Input placeholder={t.providers.fieldModelsPlaceholder} />
           </Form.Item>
-          <Form.Item name="default_model" label="默认模型">
-            <Input placeholder="gpt-4" />
+          <Form.Item name="default_model" label={t.providers.fieldDefaultModel}>
+            <Input placeholder={t.providers.fieldDefaultModelPlaceholder} />
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* Copilot Auth Modal */}
+      {selectedProvider?.type === "copilot" && (
+        <CopilotAuthModal
+          open={copilotModalOpen}
+          providerName={selectedProvider.name}
+          onClose={() => {
+            setCopilotModalOpen(false);
+            setSelectedProvider(null);
+            fetchData();
+          }}
+        />
+      )}
+
+      {/* Kiro Auth Modal */}
+      {selectedProvider?.type === "kiro" && (
+        <KiroAuthModal
+          open={kiroModalOpen}
+          providerName={selectedProvider.name}
+          onClose={() => {
+            setKiroModalOpen(false);
+            setSelectedProvider(null);
+            fetchData();
+          }}
+        />
+      )}
     </div>
   );
 }

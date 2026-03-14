@@ -57,7 +57,7 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 				"/admin/usage",
 				"/admin/kiro/login",
 				"/admin/kiro/status",
-				"/ui/",
+				"/ui",
 			},
 		})
 	})
@@ -75,10 +75,10 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Web admin UI (no auth — SPA handles admin key via localStorage)
-	r.GET("/ui", func(c *gin.Context) {
-		c.Redirect(http.StatusMovedPermanently, "/ui/")
-	})
-	r.GET("/ui/*filepath", gin.WrapH(http.StripPrefix("/ui", web.Handler())))
+	// Handle both /ui and /ui/* with the same handler for SPA routing
+	uiHandler := gin.WrapH(http.StripPrefix("/ui", web.Handler()))
+	r.GET("/ui", uiHandler)
+	r.GET("/ui/*filepath", uiHandler)
 
 	// API routes (with auth)
 	api := r.Group("/")

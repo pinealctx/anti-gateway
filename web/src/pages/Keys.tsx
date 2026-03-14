@@ -12,8 +12,20 @@ import {
   App,
   Typography,
   Popconfirm,
+  Empty,
+  Card,
+  Alert,
+  Tooltip,
 } from "antd";
-import { PlusOutlined, ReloadOutlined, CopyOutlined } from "@ant-design/icons";
+import {
+  PlusOutlined,
+  ReloadOutlined,
+  CopyOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  KeyOutlined,
+  BarChartOutlined,
+} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
   listKeys,
@@ -22,6 +34,19 @@ import {
   deleteKey,
   type ApiKey,
 } from "@/services/api";
+import UsageModal from "@/components/UsageModal";
+import { useT } from "@/locales";
+
+const { Title, Text } = Typography;
+
+// Status Badge Component
+function StatusBadge({ status, label }: { status: boolean; label: string }) {
+  return (
+    <span className={`status-badge ${status ? "success" : "error"}`}>
+      {label}
+    </span>
+  );
+}
 
 export default function KeysPage() {
   const [data, setData] = useState<ApiKey[]>([]);
@@ -31,6 +56,11 @@ export default function KeysPage() {
   const [newKeyValue, setNewKeyValue] = useState("");
   const [form] = Form.useForm();
   const { message } = App.useApp();
+  const t = useT();
+
+  // Usage modal state
+  const [usageModalOpen, setUsageModalOpen] = useState(false);
+  const [selectedKey, setSelectedKey] = useState<ApiKey | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -38,11 +68,11 @@ export default function KeysPage() {
       const res = await listKeys();
       setData(res.keys);
     } catch {
-      message.error("加载 Key 列表失败");
+      message.error(t.keys.loadError);
     } finally {
       setLoading(false);
     }
-  }, [message]);
+  }, [message, t]);
 
   useEffect(() => {
     fetchData();
@@ -67,6 +97,11 @@ export default function KeysPage() {
     setModalOpen(true);
   };
 
+  const openUsage = (record: ApiKey) => {
+    setSelectedKey(record);
+    setUsageModalOpen(true);
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -86,13 +121,13 @@ export default function KeysPage() {
 
       if (editing) {
         await updateKey(editing.id, payload);
-        message.success("Key 已更新");
+        message.success(t.keys.updateSuccess);
         setModalOpen(false);
       } else {
         const res = await createKey(payload);
         if (res.key) {
           setNewKeyValue(res.key);
-          message.success("Key 已创建，请复制保存");
+          message.success(t.keys.createSuccess);
         } else {
           setModalOpen(false);
         }
@@ -106,52 +141,111 @@ export default function KeysPage() {
   const handleDelete = async (id: number) => {
     try {
       await deleteKey(id);
-      message.success("Key 已删除");
+      message.success(t.keys.deleteSuccess);
       fetchData();
     } catch {
-      message.error("删除失败");
+      message.error(t.keys.deleteError);
     }
   };
 
+  const handleCopyKey = () => {
+    navigator.clipboard.writeText(newKeyValue);
+    message.success(t.common.copied);
+  };
+
   const columns: ColumnsType<ApiKey> = [
-    { title: "ID", dataIndex: "id", width: 60 },
-    { title: "名称", dataIndex: "name", width: 150 },
     {
-      title: "Key",
+      title: t.common.id,
+      dataIndex: "id",
+      width: 100,
+      render: (id: string) => (
+        <Tooltip title={id}>
+          <Tag
+            className="font-mono text-xs cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={() => {
+              navigator.clipboard.writeText(id);
+              message.success(t.common.copied);
+            }}
+          >
+            {id ? id.slice(0, 8) : "—"}
+          </Tag>
+        </Tooltip>
+      ),
+    },
+    {
+      title: t.common.name,
+      dataIndex: "name",
+      width: 200,
+      render: (name: string) => <Text strong>{name}</Text>,
+    },
+    {
+      title: t.keys.keyPrefix,
       dataIndex: "key_prefix",
       width: 150,
-      render: (v: string) => <code>{v}...</code>,
+      render: (v: string) => (
+        <Tooltip title={t.keys.keyPrefixTooltip}>
+          <Text code className="text-xs">
+            {v}...
+          </Text>
+        </Tooltip>
+      ),
     },
     {
-      title: "启用",
+      title: t.common.enabled,
       dataIndex: "enabled",
       width: 80,
-      render: (v: boolean) =>
-        v ? <Tag color="green">是</Tag> : <Tag color="red">否</Tag>,
+      align: "center",
+      render: (v: boolean) => <StatusBadge status={v} label={v ? t.common.yes : t.common.no} />,
     },
-    { title: "QPM", dataIndex: "qpm", width: 80 },
-    { title: "TPM", dataIndex: "tpm", width: 100 },
     {
-      title: "默认 Provider",
+      title: "QPM",
+      dataIndex: "qpm",
+      width: 80,
+      align: "center",
+      render: (v: number) => <Text code>{v}</Text>,
+    },
+    {
+      title: "TPM",
+      dataIndex: "tpm",
+      width: 80,
+      align: "center",
+      render: (v: number) => <Text code>{v?.toLocaleString()}</Text>,
+    },
+    {
+      title: t.keys.fieldDefaultProvider,
       dataIndex: "default_provider",
-      width: 130,
-      render: (v: string) => v || "-",
+      ellipsis: true,
+      render: (v: string) =>
+        v ? <Tag>{v}</Tag> : <Text type="secondary">-</Text>,
     },
     {
-      title: "操作",
-      width: 150,
+      title: t.common.actions,
+      width: 100,
+      fixed: "right",
       render: (_, record) => (
-        <Space>
-          <Button type="link" size="small" onClick={() => openEdit(record)}>
-            编辑
-          </Button>
+        <Space size="small">
+          <Tooltip title={t.keys.usage}>
+            <Button
+              type="text"
+              size="small"
+              icon={<BarChartOutlined />}
+              onClick={() => openUsage(record)}
+              className="text-blue-500"
+            />
+          </Tooltip>
+          <Button
+            type="text"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => openEdit(record)}
+          />
           <Popconfirm
-            title="确定删除此 Key?"
+            title={t.keys.deleteConfirm}
+            description={t.keys.deleteDesc}
             onConfirm={() => handleDelete(record.id)}
+            okButtonProps={{ danger: true }}
           >
-            <Button type="link" size="small" danger>
-              删除
-            </Button>
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
@@ -160,85 +254,139 @@ export default function KeysPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <Typography.Title level={4} className="!mb-0">
-          API Key 管理
-        </Typography.Title>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <Title level={4} className="!mb-0">
+          {t.keys.title}
+        </Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
-            刷新
+            {t.common.refresh}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            创建 Key
+            {t.keys.createKey}
           </Button>
         </Space>
       </div>
 
-      <Table
-        rowKey="id"
-        columns={columns}
-        dataSource={data}
-        loading={loading}
-        pagination={false}
-        size="middle"
-      />
+      <Card className="overflow-hidden">
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={data}
+          loading={loading}
+          pagination={false}
+          size="middle"
+          scroll={{ x: 550 }}
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={t.empty.noKeys}
+              >
+                <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                  {t.empty.createFirstKey}
+                </Button>
+              </Empty>
+            ),
+          }}
+        />
+      </Card>
 
+      {/* Key Form Modal */}
       <Modal
-        title={editing ? "编辑 Key" : "创建 Key"}
+        title={editing ? t.keys.editKey : t.keys.createKey}
         open={modalOpen}
         onOk={newKeyValue ? () => setModalOpen(false) : handleSubmit}
         onCancel={() => setModalOpen(false)}
-        okText={newKeyValue ? "完成" : "确定"}
+        okText={newKeyValue ? t.common.complete : editing ? t.common.save : t.common.create}
+        cancelText={t.common.cancel}
         width={520}
         destroyOnClose
       >
         {newKeyValue ? (
           <div className="py-4">
-            <Typography.Paragraph type="warning">
-              请立即复制此 Key，关闭后将无法再次查看完整值：
-            </Typography.Paragraph>
-            <Input.Search
-              value={newKeyValue}
-              readOnly
-              enterButton={<CopyOutlined />}
-              onSearch={() => {
-                navigator.clipboard.writeText(newKeyValue);
-                message.success("已复制");
-              }}
+            <Alert
+              type="warning"
+              showIcon
+              message={t.keys.copyWarning}
+              description={t.keys.copyWarningDesc}
+              className="mb-4"
             />
+            <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <KeyOutlined className="text-blue-500" />
+                <Text strong>API Key</Text>
+              </div>
+              <Input.Search
+                value={newKeyValue}
+                readOnly
+                enterButton={<CopyOutlined />}
+                onSearch={handleCopyKey}
+                className="font-mono"
+              />
+            </div>
           </div>
         ) : (
           <Form form={form} layout="vertical" className="mt-4">
             <Form.Item
               name="name"
-              label="名称"
-              rules={[{ required: true, message: "请输入名称" }]}
+              label={t.keys.fieldName}
+              rules={[{ required: true, message: t.common.required }]}
             >
-              <Input placeholder="my-api-key" />
+              <Input placeholder={t.keys.fieldNamePlaceholder} />
             </Form.Item>
             {editing && (
-              <Form.Item name="enabled" label="启用" valuePropName="checked">
+              <Form.Item name="enabled" label={t.keys.fieldEnabled} valuePropName="checked">
                 <Switch />
               </Form.Item>
             )}
-            <Form.Item name="default_provider" label="默认 Provider">
-              <Input placeholder="留空使用全局默认" />
+            <Form.Item name="default_provider" label={t.keys.fieldDefaultProvider}>
+              <Input placeholder={t.keys.fieldDefaultProviderPlaceholder} />
             </Form.Item>
-            <Form.Item name="allowed_models" label="允许的模型（逗号分隔，留空=所有）">
-              <Input placeholder="gpt-4, claude-sonnet-4-20250514" />
+            <Form.Item
+              name="allowed_models"
+              label={t.keys.fieldAllowedModels}
+              tooltip={t.keys.fieldAllowedModelsTooltip}
+            >
+              <Input placeholder={t.keys.fieldAllowedModelsPlaceholder} />
             </Form.Item>
-            <Form.Item name="allowed_providers" label="允许的 Provider（逗号分隔，留空=所有）">
-              <Input placeholder="openai, anthropic" />
+            <Form.Item
+              name="allowed_providers"
+              label={t.keys.fieldAllowedProviders}
+              tooltip={t.keys.fieldAllowedProvidersTooltip}
+            >
+              <Input placeholder={t.keys.fieldAllowedProvidersPlaceholder} />
             </Form.Item>
-            <Form.Item name="qpm" label="QPM（每分钟请求数）">
+            <Form.Item
+              name="qpm"
+              label={t.keys.fieldQpm}
+              tooltip={t.keys.fieldQpmTooltip}
+            >
               <InputNumber min={0} className="w-full" />
             </Form.Item>
-            <Form.Item name="tpm" label="TPM（每分钟 Token 数）">
+            <Form.Item
+              name="tpm"
+              label={t.keys.fieldTpm}
+              tooltip={t.keys.fieldTpmTooltip}
+            >
               <InputNumber min={0} className="w-full" />
             </Form.Item>
           </Form>
         )}
       </Modal>
+
+      {/* Usage Modal */}
+      {selectedKey && (
+        <UsageModal
+          open={usageModalOpen}
+          keyId={selectedKey.id}
+          keyName={selectedKey.name}
+          onClose={() => {
+            setUsageModalOpen(false);
+            setSelectedKey(null);
+          }}
+        />
+      )}
     </div>
   );
 }
