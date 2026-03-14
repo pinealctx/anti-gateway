@@ -8,7 +8,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -173,13 +175,31 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Handler: r,
 	}
 
+	// Build UI URL (use localhost for browser access)
+	uiURL := fmt.Sprintf("http://127.0.0.1:%d/ui", gwCfg.Server.Port)
+
 	// Start server in goroutine
 	go func() {
-		logger.Info("Server listening", zap.String("addr", addr))
+		logger.Info("Server listening",
+			zap.String("addr", addr),
+			zap.String("ui", uiURL),
+		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatal("Server error", zap.Error(err))
 		}
 	}()
+
+	// Open browser if --open flag is set
+	openUI, _ := cmd.Flags().GetBool("open")
+	if openUI {
+		go func() {
+			// Wait a moment for server to start
+			time.Sleep(500 * time.Millisecond)
+			if err := openBrowser(uiURL); err != nil {
+				logger.Warn("Failed to open browser", zap.Error(err))
+			}
+		}()
+	}
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
@@ -264,4 +284,18 @@ func generateRandomKey() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// openBrowser opens the specified URL in the default browser.
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default: // linux, freebsd, etc.
+		cmd = exec.Command("xdg-open", url)
+	}
+	return cmd.Start()
 }

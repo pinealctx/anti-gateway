@@ -1,4 +1,4 @@
-import { getAdminKey } from "@/stores/auth";
+import { getAdminKey, clearAdminKey } from "@/stores/auth";
 
 const BASE = "";
 
@@ -30,6 +30,12 @@ async function request<T>(
   });
 
   if (!resp.ok) {
+    // Handle 401 Unauthorized - clear auth and redirect to login
+    if (resp.status === 401) {
+      clearAdminKey();
+      window.location.href = "/ui/login";
+      throw new ApiError(resp.status, "Unauthorized");
+    }
     const data = await resp.json().catch(() => ({}));
     throw new ApiError(
       resp.status,

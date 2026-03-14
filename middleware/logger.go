@@ -33,7 +33,7 @@ func Logger(logger *zap.Logger) gin.HandlerFunc {
 		status := c.Writer.Status()
 		reqID, _ := c.Get("request_id")
 
-		logger.Info("request",
+		logger.Debug("request",
 			zap.String("request_id", reqID.(string)),
 			zap.Int("status", status),
 			zap.String("method", c.Request.Method),

@@ -55,6 +55,9 @@ func BindFlags(cmd *cobra.Command) {
 	f.Bool("tenant", false, "Enable multi-tenant mode (env: TENANT_ENABLED)")
 	f.String("db-path", "antigateway.db", "SQLite database path (env: DB_PATH)")
 
+	// UI
+	f.BoolP("open", "o", false, "Open UI in browser on startup (env: OPEN_UI)")
+
 	// Config file
 	f.StringP("config", "c", "", "Path to config file (YAML/TOML/JSON)")
 }

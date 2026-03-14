@@ -18,7 +18,11 @@ func Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Try to serve static files first
 		path := r.URL.Path
-		if path == "/" || path == "" {
+		// Remove leading slash for fs.Stat
+		if len(path) > 0 && path[0] == '/' {
+			path = path[1:]
+		}
+		if path == "" {
 			path = "index.html"
 		}
 		if _, err := fs.Stat(sub, path); err == nil {
