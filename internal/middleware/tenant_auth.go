@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pinealctx/anti-gateway/internal/tenant"
 	"github.com/gin-gonic/gin"
+	"github.com/pinealctx/anti-gateway/internal/tenant"
 )
 
 const (

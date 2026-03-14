@@ -186,7 +186,6 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 				Content:   "OK",
 			},
 		})
-		userBuffer = nil
 	}
 
 	// 5. Build current message from tail

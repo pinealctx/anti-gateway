@@ -4,13 +4,13 @@ import (
 	"crypto/hmac"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/pinealctx/anti-gateway/internal/api/handlers"
 	"github.com/pinealctx/anti-gateway/internal/config"
 	"github.com/pinealctx/anti-gateway/internal/core/providers"
 	"github.com/pinealctx/anti-gateway/internal/middleware"
 	"github.com/pinealctx/anti-gateway/internal/tenant"
 	"github.com/pinealctx/anti-gateway/internal/web"
-	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 )

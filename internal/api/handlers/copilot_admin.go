@@ -3,9 +3,9 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/pinealctx/anti-gateway/internal/core/providers"
 	copilotProvider "github.com/pinealctx/anti-gateway/internal/providers/copilot"
-	"github.com/gin-gonic/gin"
 )
 
 // CopilotAdminHandler provides device flow management endpoints.

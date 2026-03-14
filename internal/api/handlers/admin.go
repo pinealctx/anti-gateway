@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/pinealctx/anti-gateway/internal/config"
 	"github.com/pinealctx/anti-gateway/internal/core/providers"
 	"github.com/pinealctx/anti-gateway/internal/tenant"
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
