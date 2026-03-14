@@ -120,7 +120,7 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 		admin.GET("/usage", adminH.GetUsage)
 
 		// Copilot device flow management (dynamic provider lookup)
-		copilotH := handlers.NewCopilotAdminHandler(cfg.Registry)
+		copilotH := handlers.NewCopilotAdminHandler(cfg.Registry, cfg.Store)
 		admin.POST("/auth/device-code", copilotH.StartDeviceFlow)
 		admin.GET("/auth/poll/:id", copilotH.PollDeviceFlow)
 		admin.POST("/auth/complete/:id", copilotH.CompleteDeviceFlow)

@@ -90,11 +90,16 @@ func (p *Provider) AuthMgr() *AuthManager {
 func (p *Provider) SetGithubToken(token string) {
 	p.mu.Lock()
 	p.githubToken = token
-	p.healthy = true
+	p.healthy = true // Optimistically set healthy, refreshToken will update based on result
 	p.mu.Unlock()
 
-	// Trigger immediate token refresh
-	go func() { _ = p.refreshToken() }()
+	// Trigger synchronous token refresh (blocking to ensure status is updated)
+	if err := p.refreshToken(); err != nil {
+		p.logger.Warn("Initial token refresh after SetGithubToken failed",
+			zap.String("provider", p.name),
+			zap.Error(err),
+		)
+	}
 }
 
 // GetUsername returns the authenticated username.
@@ -374,7 +379,13 @@ func (p *Provider) refreshToken() error {
 	p.mu.RUnlock()
 
 	if username == "" {
-		if user, err := FetchGithubUser(p.client, githubToken, p.vsCodeVer); err == nil {
+		user, err := FetchGithubUser(p.client, githubToken, p.vsCodeVer)
+		if err != nil {
+			p.logger.Warn("Failed to fetch GitHub user info",
+				zap.String("provider", p.name),
+				zap.Error(err),
+			)
+		} else {
 			p.mu.Lock()
 			p.username = user.Login
 			p.mu.Unlock()

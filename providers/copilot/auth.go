@@ -288,7 +288,8 @@ func FetchGithubUser(client *http.Client, githubToken, vsCodeVersion string) (*G
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github user request failed (%d)", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("github user request failed (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var user GithubUser

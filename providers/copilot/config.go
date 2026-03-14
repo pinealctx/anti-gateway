@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	copilotVersion   = "0.26.7"
-	githubAPIVersion = "2025-04-01"
+	copilotVersion   = "0.39.1"
+	githubAPIVersion = "2026-03-10"
 
 	copilotChatURL       = "https://api.githubcopilot.com/chat/completions"
 	copilotModelsURL     = "https://api.githubcopilot.com/models"

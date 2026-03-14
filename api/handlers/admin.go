@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -328,6 +329,16 @@ func (h *AdminHandler) ListProviders(c *gin.Context) {
 			})
 		}
 	}
+
+	// Sort by name for stable ordering
+	slices.SortFunc(result, func(a, b providerInfo) int {
+		if a.Name < b.Name {
+			return -1
+		} else if a.Name > b.Name {
+			return 1
+		}
+		return 0
+	})
 
 	c.JSON(http.StatusOK, gin.H{"providers": result, "total": len(result)})
 }

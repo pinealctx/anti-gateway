@@ -26,6 +26,8 @@ import {
   CloseCircleOutlined,
   GithubOutlined,
   ThunderboltOutlined,
+  StopOutlined,
+  PlayCircleOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -151,6 +153,16 @@ export default function ProvidersPage() {
     }
   };
 
+  const handleToggleEnabled = async (record: ProviderRecord) => {
+    try {
+      await updateProvider(record.id, { enabled: !record.enabled });
+      message.success(record.enabled ? t.providers.disableSuccess : t.providers.enableSuccess);
+      fetchData();
+    } catch {
+      message.error(t.providers.updateError);
+    }
+  };
+
   const columns: ColumnsType<ProviderRecord> = [
     {
       title: t.common.id,
@@ -269,6 +281,15 @@ export default function ProvidersPage() {
               </Button>
             </Tooltip>
           )}
+          <Tooltip title={record.enabled ? t.providers.disable : t.providers.enable}>
+            <Button
+              type="text"
+              size="small"
+              icon={record.enabled ? <StopOutlined /> : <PlayCircleOutlined />}
+              onClick={() => handleToggleEnabled(record)}
+              className={record.enabled ? "text-orange-500" : "text-green-500"}
+            />
+          </Tooltip>
           <Button
             type="text"
             size="small"

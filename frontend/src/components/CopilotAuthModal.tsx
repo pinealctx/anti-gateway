@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { Modal, Typography, Button, Tag, Space, App, Spin } from "antd";
-import { GithubOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, CloseCircleOutlined } from "@ant-design/icons";
+import { Modal, Typography, Button, Tag, Space, App, Spin, Tooltip } from "antd";
+import { GithubOutlined, ReloadOutlined, LinkOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined } from "@ant-design/icons";
 import {
   startDeviceFlow,
   pollDeviceFlow,
@@ -55,6 +55,12 @@ export default function CopilotAuthModal({ open, providerName, onClose }: Props)
       const session = await startDeviceFlow(providerName);
       setFlow(session);
 
+      // Auto-copy device code to clipboard
+      if (session.user_code) {
+        navigator.clipboard.writeText(session.user_code);
+        message.success(t.copilot.codeCopied);
+      }
+
       // Start polling
       pollRef.current = setInterval(async () => {
         try {
@@ -64,7 +70,8 @@ export default function CopilotAuthModal({ open, providerName, onClose }: Props)
             await completeDeviceFlow(session.id, providerName);
             message.success(t.copilot.authSuccess);
             setFlow(null);
-            fetchStatus();
+            // Small delay to ensure backend state is fully updated
+            setTimeout(() => fetchStatus(), 500);
           } else if (pollStatus.status === "error" || pollStatus.error) {
             clearInterval(pollRef.current);
             message.error(pollStatus.error || t.copilot.authFailed);
@@ -185,11 +192,21 @@ export default function CopilotAuthModal({ open, providerName, onClose }: Props)
           <Link href={flow.verification_uri} target="_blank" className="text-base">
             {flow.verification_uri}
           </Link>
-          <div className="mt-4 inline-flex flex-col items-center bg-white dark:bg-gray-800 rounded-lg px-6 py-3 shadow-sm">
+          <div className="mt-4 inline-flex flex-col items-center bg-white dark:bg-gray-800 rounded-lg px-6 py-3 shadow-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            onClick={() => {
+              navigator.clipboard.writeText(flow.user_code);
+              message.success(t.copilot.codeCopied);
+            }}
+          >
             <Text type="secondary" className="text-xs mb-1">{t.copilot.verificationCode}</Text>
-            <Text className="text-2xl font-mono font-bold tracking-widest text-blue-600">
-              {flow.user_code}
-            </Text>
+            <div className="flex items-center gap-2">
+              <Text className="text-2xl font-mono font-bold tracking-widest text-blue-600">
+                {flow.user_code}
+              </Text>
+              <Tooltip title={t.common.copy}>
+                <CopyOutlined className="text-gray-400 hover:text-blue-500" />
+              </Tooltip>
+            </div>
           </div>
         </div>
       )}

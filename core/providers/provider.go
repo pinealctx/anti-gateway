@@ -84,11 +84,14 @@ func NewRegistryWithStrategy(fallback string, strategy LBStrategy) *Registry {
 func (r *Registry) Register(p AIProvider) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	healthy := p.IsHealthy(ctx)
+	cancel()
 	r.entries[p.Name()] = &ProviderEntry{
 		Provider: p,
 		Weight:   1,
 		Models:   nil,
-		healthy:  true,
+		healthy:  healthy,
 		Stats:    &ProviderStats{},
 	}
 }
@@ -97,6 +100,9 @@ func (r *Registry) Register(p AIProvider) {
 func (r *Registry) RegisterWithConfig(p AIProvider, weight int, modelList []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	healthy := p.IsHealthy(ctx)
+	cancel()
 	models := make(map[string]bool, len(modelList))
 	for _, m := range modelList {
 		models[m] = true
@@ -108,7 +114,7 @@ func (r *Registry) RegisterWithConfig(p AIProvider, weight int, modelList []stri
 		Provider: p,
 		Weight:   weight,
 		Models:   models,
-		healthy:  true,
+		healthy:  healthy,
 		Stats:    &ProviderStats{},
 	}
 }

@@ -6,15 +6,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pinealctx/anti-gateway/core/providers"
 	copilotProvider "github.com/pinealctx/anti-gateway/providers/copilot"
+	"github.com/pinealctx/anti-gateway/tenant"
 )
 
 // CopilotAdminHandler provides device flow management endpoints.
 type CopilotAdminHandler struct {
 	registry *providers.Registry
+	store    *tenant.Store
 }
 
-func NewCopilotAdminHandler(registry *providers.Registry) *CopilotAdminHandler {
-	return &CopilotAdminHandler{registry: registry}
+func NewCopilotAdminHandler(registry *providers.Registry, store *tenant.Store) *CopilotAdminHandler {
+	return &CopilotAdminHandler{registry: registry, store: store}
 }
 
 // findCopilotProvider finds a Copilot provider by name, or the first one if name is empty.
@@ -130,6 +132,13 @@ func (h *CopilotAdminHandler) CompleteDeviceFlow(c *gin.Context) {
 	// Set the GitHub token on the provider (single account per provider)
 	provider.SetGithubToken(token)
 	provider.AuthMgr().RemoveSession(id)
+
+	// Persist the token to database
+	if h.store != nil {
+		if rec, exists := h.store.GetProviderByName(provider.Name()); exists {
+			_, _ = h.store.UpdateProvider(rec.ID, tenant.WithProviderGithubToken(token))
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "Copilot token activated",

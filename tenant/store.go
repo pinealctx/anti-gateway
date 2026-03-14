@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -231,7 +232,7 @@ func (s *Store) GetKeyByID(id string) (*APIKey, error) {
 	return nil, fmt.Errorf("key not found: %s", id)
 }
 
-// ListKeys returns all API keys.
+// ListKeys returns all API keys sorted by name.
 func (s *Store) ListKeys() []*APIKey {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -239,6 +240,7 @@ func (s *Store) ListKeys() []*APIKey {
 	for _, k := range s.cache {
 		keys = append(keys, k)
 	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].Name < keys[j].Name })
 	return keys
 }
 
@@ -550,7 +552,7 @@ func (s *Store) GetProviderByName(name string) (*ProviderRecord, bool) {
 	return nil, false
 }
 
-// ListProviderRecords returns all persisted provider configurations.
+// ListProviderRecords returns all persisted provider configurations sorted by name.
 func (s *Store) ListProviderRecords() []*ProviderRecord {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -558,6 +560,7 @@ func (s *Store) ListProviderRecords() []*ProviderRecord {
 	for _, p := range s.providerCache {
 		result = append(result, p)
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
 }
 
