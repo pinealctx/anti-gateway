@@ -6,16 +6,15 @@ antigateway.exe
 # Config (contains secrets)
 config.yaml
 
-# Build
-/internal/web/static/*.js
-/internal/web/static/*.css
-/internal/web/static/*.html
-/internal/web/static/*.svg
-/internal/web/static/assets/
+# Frontend build artifacts (uncomment to ignore)
+# /web/static/*.js
+# /web/static/*.css
+# /web/static/*.html
+# /web/static/assets/
 
-# Web frontend
-web/node_modules/
-web/dist/
+# Frontend source
+frontend/node_modules/
+frontend/dist/
 
 # IDE
 .idea/
@@ -37,3 +36,4 @@ Thumbs.db
 
 # Build artifacts
 dist/
+server.exe

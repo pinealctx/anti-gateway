@@ -26,7 +26,7 @@ If any related implementation affects your rights or interests, please contact t
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.23+
 - Node.js 20+ (for frontend development)
 
 ### Installation
@@ -37,7 +37,7 @@ git clone https://github.com/pinealctx/anti-gateway.git
 cd anti-gateway
 
 # Build the server
-go build -o antigateway ./cmd/server
+go build -o antigateway .
 
 # Copy and configure
 cp config.example.yaml config.yaml
@@ -74,7 +74,7 @@ auth:
 
 defaults:
   provider: ""           # Fallback provider name
-  model: "claude-opus-4.6"
+  model: "claude-sonnet-4-20250514"
   lb_strategy: "smart"   # weighted | round-robin | least-used | priority | smart
 
 tenant:
@@ -92,7 +92,7 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{
-    "model": "claude-opus-4.6",
+    "model": "claude-sonnet-4-20250514",
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": true
   }'
@@ -105,7 +105,7 @@ curl -X POST http://localhost:8080/v1/messages \
   -H "x-api-key: YOUR_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
   -d '{
-    "model": "claude-opus-4.6",
+    "model": "claude-sonnet-4-20250514",
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
@@ -116,7 +116,7 @@ curl -X POST http://localhost:8080/v1/messages \
 Use model prefixes to route to specific providers:
 - `openai/gpt-4o` → OpenAI provider
 - `anthropic/claude-3-opus` → Anthropic provider
-- `kiro/claude-opus-4.6` → Kiro provider
+- `kiro/claude-sonnet-4-20250514` → Kiro provider
 
 ### Other Endpoints
 
@@ -126,6 +126,7 @@ Use model prefixes to route to specific providers:
 | `/v1/embeddings` | POST | Generate embeddings (OpenAI format) |
 | `/health` | GET | Health check |
 | `/metrics` | GET | Prometheus metrics |
+| `/ui` | GET | Web admin UI |
 
 ## Admin API
 
@@ -192,11 +193,15 @@ Uses PKCE authentication flow. Configure via admin endpoints:
 curl -X POST http://localhost:8080/admin/kiro/login \
   -H "Authorization: Bearer ADMIN_KEY"
 
-# Complete authentication with code
-curl -X POST http://localhost:8080/admin/kiro/callback \
+# Check login status
+curl http://localhost:8080/admin/kiro/login/:id \
+  -H "Authorization: Bearer ADMIN_KEY"
+
+# Complete authentication
+curl -X POST http://localhost:8080/admin/kiro/login/complete/:id \
   -H "Authorization: Bearer ADMIN_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"code": "AUTH_CODE"}'
+  -d '{"code": "AUTH_CODE", "state": "STATE"}'
 ```
 
 ### GitHub Copilot
@@ -205,11 +210,11 @@ Uses device flow authentication:
 
 ```bash
 # Start device flow
-curl -X POST http://localhost:8080/admin/copilot/device-code \
+curl -X POST http://localhost:8080/admin/auth/device-code \
   -H "Authorization: Bearer ADMIN_KEY"
 
 # Poll for token (after user authorizes)
-curl -X POST http://localhost:8080/admin/copilot/token \
+curl http://localhost:8080/admin/auth/poll/:id \
   -H "Authorization: Bearer ADMIN_KEY"
 ```
 
@@ -276,21 +281,16 @@ make build VERSION=v0.3.0
 Version is injected at build time via ldflags:
 
 ```bash
-go build -ldflags "-X github.com/pinealctx/anti-gateway/internal/config.Version=v0.3.0" -o antigateway ./cmd/server
+go build -ldflags "-X github.com/pinealctx/anti-gateway/config.Version=v0.3.0" -o antigateway .
 ```
-
-## Release Automation
-
-GitHub Actions release workflow is configured to trigger on tags matching `v*.*.*`.
-During release build, the workflow injects the tag as the binary version through ldflags (no hardcoded release version in code).
 
 ### Frontend Development
 
 ```bash
-cd web
+cd frontend
 npm install
 npm run dev    # Start dev server with hot reload
-npm run build  # Build for production (outputs to internal/web/static)
+npm run build  # Build for production (outputs to web/static)
 ```
 
 ### Pre-commit Hooks
@@ -348,17 +348,10 @@ Prometheus metrics available at `/metrics`:
 
 ## Acknowledgements
 
-Thanks to the following related projects in this workspace:
+Thanks to the following related projects:
 
-- AntiHub-ALL: https://github.com/zhongruan0522/AntiHub-ALL
-- copilot2api-go: https://github.com/StarryKira/copilot2api-go
-
-## Open Source License Compatibility
-
-- This project (`AntiGateway`) is licensed under **MIT**.
-- `copilot2api-go` is also **MIT**, which is generally compatible with this project's MIT licensing.
-- `AntiHub-ALL` uses **AGPL-3.0**. The current acknowledgement/reference does not change this project's MIT license by itself.
-- If AGPL-licensed source code is copied or distributed as part of this project in the future, AGPL obligations may apply to those parts (or the combined distribution). Please review before merging such changes.
+- [AntiHub-ALL](https://github.com/zhongruan0522/AntiHub-ALL) - Reference for Kiro provider implementation
+- [copilot2api-go](https://github.com/StarryKira/copilot2api-go) - GitHub Copilot provider implementation reference
 
 ## License
 
@@ -366,4 +359,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions are welcome! Please open an issue or submit a pull request.

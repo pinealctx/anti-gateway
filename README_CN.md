@@ -12,19 +12,21 @@
 
 ## 核心功能
 
-- 多提供方接入：Kiro（AWS Claude）、OpenAI、GitHub Copilot、Anthropic
-- 协议转换：OpenAI、Anthropic、CodeWhisperer 格式互转
-- 负载均衡：weighted、round-robin、least-used、priority、smart
-- 多租户管理：按 Key 鉴权、QPM/TPM 限流、用量统计
-- 流式响应：完整 SSE 支持
-- Web 管理后台：管理提供方、密钥、使用情况
-- Prometheus 指标：请求、延迟、Token、错误监控
+- **多提供方接入**：Kiro（AWS Claude）、OpenAI、GitHub Copilot、Anthropic
+- **协议转换**：OpenAI、Anthropic、CodeWhisperer 格式互转
+- **负载均衡**：weighted、round-robin、least-used、priority、smart 五种策略
+- **多租户管理**：按 Key 鉴权、QPM/TPM 限流、用量统计
+- **自动续写**：自动续写被截断的 LLM 响应
+- **输出清洗**：移除 IDE 特定产物，执行身份替换
+- **流式响应**：完整 SSE 流式支持
+- **Web 管理后台**：React 管理面板，管理密钥、提供方、监控使用情况
+- **Prometheus 指标**：请求、延迟、Token、错误监控
 
 ## 快速开始
 
 ### 依赖
 
-- Go 1.25+
+- Go 1.23+
 - Node.js 20+（前端开发）
 
 ### 构建运行
@@ -33,43 +35,187 @@
 git clone https://github.com/pinealctx/anti-gateway.git
 cd anti-gateway
 
-# 默认本地构建（版本为 dev）
-make build
+# 构建
+go build -o antigateway .
 
-# 指定版本构建
-make build VERSION=v0.3.0
-
+# 配置
 cp config.example.yaml config.yaml
+# 编辑 config.yaml
+
+# 运行
 ./antigateway
 ```
 
-## 版本注入（ldflags）
-
-项目不再在代码中硬编码发布版本号，发布版本通过构建参数注入：
+### Docker
 
 ```bash
-go build -ldflags "-X github.com/pinealctx/anti-gateway/internal/config.Version=v0.3.0" -o antigateway ./cmd/server
+docker build -t antigateway .
+docker run -p 8080:8080 -v $(pwd)/config.yaml:/app/config.yaml antigateway
 ```
 
-## 自动发版
+## 配置说明
 
-已配置 GitHub Actions：当推送 tag 且匹配 `v*.*.*` 时自动触发 release。
-工作流会在编译阶段将 tag 值通过 ldflags 注入到二进制版本字段。
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 8080
+  log_level: "info"
+  cors_origins: []       # 空 = 允许所有
+
+auth:
+  api_key: ""            # API 认证令牌（空 = 禁用）
+  admin_key: ""          # /admin/* 端点专用密钥
+
+defaults:
+  provider: ""           # 默认提供方
+  model: "claude-sonnet-4-20250514"
+  lb_strategy: "smart"   # weighted | round-robin | least-used | priority | smart
+
+tenant:
+  enabled: false         # 启用多租户模式
+  db_path: "antigateway.db"
+```
+
+## API 端点
+
+### 聊天补全
+
+**OpenAI 格式**
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "messages": [{"role": "user", "content": "你好"}],
+    "stream": true
+  }'
+```
+
+**Anthropic 格式**
+```bash
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "你好"}]
+  }'
+```
+
+### 模型路由
+
+使用前缀路由到指定提供方：
+- `openai/gpt-4o` → OpenAI 提供方
+- `anthropic/claude-3-opus` → Anthropic 提供方
+- `kiro/claude-sonnet-4-20250514` → Kiro 提供方
+
+### 其他端点
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/v1/models` | GET | 列出可用模型 |
+| `/v1/embeddings` | POST | 生成向量（OpenAI 格式） |
+| `/health` | GET | 健康检查 |
+| `/metrics` | GET | Prometheus 指标 |
+| `/ui` | GET | Web 管理界面 |
+
+## 开发
+
+### 构建
+
+```bash
+make fmt        # 格式化
+make lint       # 代码检查
+make build      # 构建
+make test       # 测试
+make check      # 全部检查
+```
+
+版本注入：
+
+```bash
+go build -ldflags "-X github.com/pinealctx/anti-gateway/config.Version=v0.3.0" -o antigateway .
+```
+
+### 前端开发
+
+```bash
+cd frontend
+npm install
+npm run dev    # 开发服务器
+npm run build  # 生产构建（输出到 web/static）
+```
+
+### Pre-commit Hooks
+
+```bash
+make setup-hooks
+```
+
+## 负载均衡策略
+
+| 策略 | 说明 |
+|------|------|
+| `weighted` | 按权重随机选择 |
+| `round-robin` | 轮询 |
+| `least-used` | 选择请求量最少的提供方 |
+| `priority` | 始终选择权重最高的提供方 |
+| `smart` | 综合权重、429 错误率、平均延迟评分选择 |
+
+## 架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Clients                               │
+│              (OpenAI SDK / Anthropic SDK / curl)            │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     AntiGateway                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │   Auth      │  │  Rate       │  │    Protocol         │  │
+│  │ Middleware  │──│  Limiter    │──│    Converter        │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+│                          │                                   │
+│                          ▼                                   │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │              Provider Registry                       │    │
+│  │         (Load Balancing + Health Checks)            │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+          ┌───────────────┼───────────────┬───────────────┐
+          ▼               ▼               ▼               ▼
+     ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐
+     │  Kiro   │    │ OpenAI  │    │ Copilot │    │Anthropic│
+     └─────────┘    └─────────┘    └─────────┘    └─────────┘
+```
+
+## 指标
+
+`/metrics` 端点提供 Prometheus 指标：
+
+- `antigateway_requests_total` - 按提供方、模型、状态的请求总数
+- `antigateway_request_duration_seconds` - 请求延迟直方图
+- `antigateway_tokens_total` - 按提供方、模型、类型的 Token 使用量
+- `antigateway_provider_health` - 提供方健康状态
+- `antigateway_rate_limit_hits_total` - 限流触发次数
 
 ## 致谢
 
 感谢以下相关项目：
 
-- AntiHub-ALL: https://github.com/zhongruan0522/AntiHub-ALL
-- copilot2api-go: https://github.com/StarryKira/copilot2api-go
+- [AntiHub-ALL](https://github.com/zhongruan0522/AntiHub-ALL) - Kiro 提供方实现参考
+- [copilot2api-go](https://github.com/StarryKira/copilot2api-go) - GitHub Copilot 提供方实现参考
 
-## 开源协议兼容性说明
+## 协议
 
-- 本项目（AntiGateway）为 MIT 协议。
-- copilot2api-go 为 MIT，和本项目协议兼容。
-- AntiHub-ALL 为 AGPL-3.0；仅做引用/致谢不会自动改变本项目 MIT 协议。
-- 若未来复制或合并 AGPL 代码到本项目并进行分发，相关部分可能需要遵守 AGPL 义务。
+本项目基于 MIT 协议开源，详见 [LICENSE](LICENSE)。
 
-## 文档导航
+## 贡献
 
-- 英文完整文档请查看 [README.md](README.md)
+欢迎贡献！请提交 issue 或 pull request。
