@@ -95,7 +95,7 @@ func (s *Store) migrate() error {
 		enabled       INTEGER NOT NULL DEFAULT 1,
 		base_url      TEXT NOT NULL DEFAULT '',
 		api_key       TEXT NOT NULL DEFAULT '',
-		github_tokens TEXT NOT NULL DEFAULT '[]',
+		github_token  TEXT NOT NULL DEFAULT '',
 		models        TEXT NOT NULL DEFAULT '[]',
 		default_model TEXT NOT NULL DEFAULT '',
 		created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -457,7 +457,7 @@ func (s *Store) loadProviderCache() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.db.Query("SELECT id, name, type, weight, enabled, base_url, api_key, github_tokens, models, default_model, created_at, updated_at FROM providers")
+	rows, err := s.db.Query("SELECT id, name, type, weight, enabled, base_url, api_key, github_token, models, default_model, created_at, updated_at FROM providers")
 	if err != nil {
 		return err
 	}
@@ -477,19 +477,15 @@ func (s *Store) loadProviderCache() error {
 func scanProvider(rows *sql.Rows) (*ProviderRecord, error) {
 	var p ProviderRecord
 	var enabled int
-	var tokensJSON, modelsJSON string
+	var modelsJSON string
 	err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.Weight, &enabled,
-		&p.BaseURL, &p.APIKey, &tokensJSON, &modelsJSON, &p.DefaultModel,
+		&p.BaseURL, &p.APIKey, &p.GithubToken, &modelsJSON, &p.DefaultModel,
 		&p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	p.Enabled = enabled == 1
-	_ = json.Unmarshal([]byte(tokensJSON), &p.GithubTokens)
 	_ = json.Unmarshal([]byte(modelsJSON), &p.Models)
-	if p.GithubTokens == nil {
-		p.GithubTokens = []string{}
-	}
 	if p.Models == nil {
 		p.Models = []string{}
 	}
@@ -499,28 +495,26 @@ func scanProvider(rows *sql.Rows) (*ProviderRecord, error) {
 // CreateProvider persists a new provider configuration.
 func (s *Store) CreateProvider(name, typ string, opts ...ProviderOption) (*ProviderRecord, error) {
 	p := &ProviderRecord{
-		ID:           generateID(),
-		Name:         name,
-		Type:         typ,
-		Weight:       1,
-		Enabled:      true,
-		GithubTokens: []string{},
-		Models:       []string{},
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		ID:        generateID(),
+		Name:      name,
+		Type:      typ,
+		Weight:    1,
+		Enabled:   true,
+		Models:    []string{},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
 	}
 	for _, opt := range opts {
 		opt(p)
 	}
 
-	tokensJSON, _ := json.Marshal(p.GithubTokens)
 	modelsJSON, _ := json.Marshal(p.Models)
 
 	_, err := s.db.Exec(
-		`INSERT INTO providers (id, name, type, weight, enabled, base_url, api_key, github_tokens, models, default_model, created_at, updated_at)
+		`INSERT INTO providers (id, name, type, weight, enabled, base_url, api_key, github_token, models, default_model, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Name, p.Type, p.Weight, boolToInt(p.Enabled),
-		p.BaseURL, p.APIKey, string(tokensJSON), string(modelsJSON), p.DefaultModel,
+		p.BaseURL, p.APIKey, p.GithubToken, string(modelsJSON), p.DefaultModel,
 		p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
@@ -581,13 +575,12 @@ func (s *Store) UpdateProvider(id string, opts ...ProviderOption) (*ProviderReco
 	}
 	target.UpdatedAt = time.Now().UTC()
 
-	tokensJSON, _ := json.Marshal(target.GithubTokens)
 	modelsJSON, _ := json.Marshal(target.Models)
 
 	_, err := s.db.Exec(
-		`UPDATE providers SET name=?, type=?, weight=?, enabled=?, base_url=?, api_key=?, github_tokens=?, models=?, default_model=?, updated_at=? WHERE id=?`,
+		`UPDATE providers SET name=?, type=?, weight=?, enabled=?, base_url=?, api_key=?, github_token=?, models=?, default_model=?, updated_at=? WHERE id=?`,
 		target.Name, target.Type, target.Weight, boolToInt(target.Enabled),
-		target.BaseURL, target.APIKey, string(tokensJSON), string(modelsJSON), target.DefaultModel,
+		target.BaseURL, target.APIKey, target.GithubToken, string(modelsJSON), target.DefaultModel,
 		target.UpdatedAt, target.ID,
 	)
 	if err != nil {

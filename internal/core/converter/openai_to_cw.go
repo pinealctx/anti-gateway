@@ -117,10 +117,10 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 	// Find the tail boundary:
 	// If trailing messages are tool role, they form the current toolResults
 	// Otherwise the last user message is the current message
-	trailingToolStart := len(nonSystemMsgs)
+	toolResultBoundary := len(nonSystemMsgs)
 	for i := len(nonSystemMsgs) - 1; i >= 0; i-- {
 		if nonSystemMsgs[i].Role == "tool" {
-			trailingToolStart = i
+			toolResultBoundary = i
 		} else {
 			break
 		}
@@ -128,10 +128,10 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 
 	var histMsgs []models.ChatMessage
 	var tailMsgs []models.ChatMessage
-	if trailingToolStart < len(nonSystemMsgs) {
+	if toolResultBoundary < len(nonSystemMsgs) {
 		// Tool result mode: history is everything before the trailing tools
-		histMsgs = nonSystemMsgs[:trailingToolStart]
-		tailMsgs = nonSystemMsgs[trailingToolStart:]
+		histMsgs = nonSystemMsgs[:toolResultBoundary]
+		tailMsgs = nonSystemMsgs[toolResultBoundary:]
 	} else {
 		// Normal mode: history is everything except the last message
 		if len(nonSystemMsgs) > 1 {
@@ -141,15 +141,15 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 	}
 
 	// Build paired history: buffer user/tool messages, flush on assistant
-	var userBuffer []models.ChatMessage
+	var pendingMsgs []models.ChatMessage
 	for _, msg := range histMsgs {
 		switch msg.Role {
 		case "user", "tool":
-			userBuffer = append(userBuffer, msg)
+			pendingMsgs = append(pendingMsgs, msg)
 		case "assistant":
-			if len(userBuffer) > 0 {
-				history = append(history, buildHistoryUserEntry(userBuffer, modelID))
-				userBuffer = nil
+			if len(pendingMsgs) > 0 {
+				history = append(history, buildHistoryUserEntry(pendingMsgs, modelID))
+				pendingMsgs = nil
 			}
 			entry := models.CWHistoryEntry{
 				AssistantResponseMessage: &models.CWAssistantResponseMessage{
@@ -178,8 +178,8 @@ func OpenAIToCW(req *models.ChatCompletionRequest, profileArn string) (*models.C
 		}
 	}
 	// Flush remaining user buffer with a synthetic assistant reply
-	if len(userBuffer) > 0 {
-		history = append(history, buildHistoryUserEntry(userBuffer, modelID))
+	if len(pendingMsgs) > 0 {
+		history = append(history, buildHistoryUserEntry(pendingMsgs, modelID))
 		history = append(history, models.CWHistoryEntry{
 			AssistantResponseMessage: &models.CWAssistantResponseMessage{
 				MessageID: uuid.New().String(),

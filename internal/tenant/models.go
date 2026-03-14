@@ -72,7 +72,7 @@ type ProviderRecord struct {
 	Enabled      bool      `json:"enabled"`
 	BaseURL      string    `json:"base_url,omitempty"`
 	APIKey       string    `json:"-"` // never expose in JSON
-	GithubTokens []string  `json:"-"` // never expose in JSON
+	GithubToken  string    `json:"-"` // single GitHub token for copilot providers
 	Models       []string  `json:"models,omitempty"`
 	DefaultModel string    `json:"default_model,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -82,13 +82,13 @@ type ProviderRecord struct {
 // ProviderOption is a functional option for configuring a ProviderRecord.
 type ProviderOption func(*ProviderRecord)
 
-func WithProviderType(t string) ProviderOption    { return func(p *ProviderRecord) { p.Type = t } }
-func WithProviderWeight(w int) ProviderOption     { return func(p *ProviderRecord) { p.Weight = w } }
-func WithProviderEnabled(e bool) ProviderOption   { return func(p *ProviderRecord) { p.Enabled = e } }
+func WithProviderType(t string) ProviderOption   { return func(p *ProviderRecord) { p.Type = t } }
+func WithProviderWeight(w int) ProviderOption    { return func(p *ProviderRecord) { p.Weight = w } }
+func WithProviderEnabled(e bool) ProviderOption  { return func(p *ProviderRecord) { p.Enabled = e } }
 func WithProviderBaseURL(u string) ProviderOption { return func(p *ProviderRecord) { p.BaseURL = u } }
 func WithProviderAPIKey(k string) ProviderOption  { return func(p *ProviderRecord) { p.APIKey = k } }
-func WithProviderGithubTokens(t []string) ProviderOption {
-	return func(p *ProviderRecord) { p.GithubTokens = t }
+func WithProviderGithubToken(t string) ProviderOption {
+	return func(p *ProviderRecord) { p.GithubToken = t }
 }
 func WithProviderModels(m []string) ProviderOption { return func(p *ProviderRecord) { p.Models = m } }
 func WithProviderDefaultModel(m string) ProviderOption {

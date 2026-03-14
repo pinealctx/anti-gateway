@@ -9,6 +9,7 @@ import (
 type RateLimiter struct {
 	mu      sync.Mutex
 	windows map[string]*keyWindow
+	stopCh  chan struct{}
 }
 
 type keyWindow struct {
@@ -22,8 +23,48 @@ type tokenEntry struct {
 }
 
 func NewRateLimiter() *RateLimiter {
-	return &RateLimiter{
+	rl := &RateLimiter{
 		windows: make(map[string]*keyWindow),
+		stopCh:  make(chan struct{}),
+	}
+	// Start periodic cleanup of stale entries
+	go rl.cleanupLoop()
+	return rl
+}
+
+// Stop stops the background cleanup goroutine.
+func (rl *RateLimiter) Stop() {
+	close(rl.stopCh)
+}
+
+// cleanupLoop periodically removes stale key windows that haven't been used recently.
+func (rl *RateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-rl.stopCh:
+			return
+		case <-ticker.C:
+			rl.cleanup()
+		}
+	}
+}
+
+// cleanup removes entries that have been inactive for more than 5 minutes.
+func (rl *RateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	cutoff := time.Now().Add(-5 * time.Minute)
+	for keyID, w := range rl.windows {
+		// Prune old entries first
+		w.requests = pruneTime(w.requests, cutoff)
+		w.tokens = pruneTokens(w.tokens, cutoff)
+		// If both windows are empty, remove the key entirely
+		if len(w.requests) == 0 && len(w.tokens) == 0 {
+			delete(rl.windows, keyID)
+		}
 	}
 }
 

@@ -176,7 +176,7 @@ func (c *CWClient) processStream(body io.ReadCloser, out chan<- CWStreamEvent) {
 			}
 
 		case "toolUseEvent":
-			// Streaming tool use: accumulate chunks (use dynamic parsing like kiro-gateway)
+			// Streaming tool use: accumulate chunks using dynamic JSON parsing
 			var payload map[string]any
 			if err := json.Unmarshal(raw.Payload, &payload); err != nil {
 				c.logger.Warn("failed to parse toolUseEvent payload", zap.Error(err))

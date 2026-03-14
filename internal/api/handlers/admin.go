@@ -212,7 +212,7 @@ type createProviderRequest struct {
 	Weight       int      `json:"weight"`
 	BaseURL      string   `json:"base_url"`
 	APIKey       string   `json:"api_key"`
-	GithubTokens []string `json:"github_tokens"`
+	GithubToken  string   `json:"github_token"`
 	Models       []string `json:"models"`
 	DefaultModel string   `json:"default_model"`
 }
@@ -248,8 +248,8 @@ func (h *AdminHandler) CreateProvider(c *gin.Context) {
 	if req.APIKey != "" {
 		opts = append(opts, tenant.WithProviderAPIKey(req.APIKey))
 	}
-	if len(req.GithubTokens) > 0 {
-		opts = append(opts, tenant.WithProviderGithubTokens(req.GithubTokens))
+	if req.GithubToken != "" {
+		opts = append(opts, tenant.WithProviderGithubToken(req.GithubToken))
 	}
 	if len(req.Models) > 0 {
 		opts = append(opts, tenant.WithProviderModels(req.Models))
@@ -357,7 +357,7 @@ type updateProviderRequest struct {
 	Enabled      *bool    `json:"enabled"`
 	BaseURL      *string  `json:"base_url"`
 	APIKey       *string  `json:"api_key"`
-	GithubTokens []string `json:"github_tokens"`
+	GithubToken  *string  `json:"github_token"`
 	Models       []string `json:"models"`
 	DefaultModel *string  `json:"default_model"`
 }
@@ -398,8 +398,8 @@ func (h *AdminHandler) UpdateProvider(c *gin.Context) {
 	if req.APIKey != nil {
 		opts = append(opts, tenant.WithProviderAPIKey(*req.APIKey))
 	}
-	if req.GithubTokens != nil {
-		opts = append(opts, tenant.WithProviderGithubTokens(req.GithubTokens))
+	if req.GithubToken != nil {
+		opts = append(opts, tenant.WithProviderGithubToken(*req.GithubToken))
 	}
 	if req.Models != nil {
 		opts = append(opts, tenant.WithProviderModels(req.Models))
@@ -412,6 +412,20 @@ func (h *AdminHandler) UpdateProvider(c *gin.Context) {
 	if err != nil {
 		adminError(c, http.StatusInternalServerError, "server_error", err.Error())
 		return
+	}
+
+	// Migrate Kiro token KV data if provider name changed
+	if oldRec.Type == "kiro" && rec.Name != oldName {
+		oldKVKey := "kiro:" + oldName + ":token"
+		newKVKey := "kiro:" + rec.Name + ":token"
+		if data, ok := h.store.GetKV(oldKVKey); ok {
+			if err := h.store.SetKV(newKVKey, data); err == nil {
+				_ = h.store.DeleteKV(oldKVKey)
+				h.logger.Info("Migrated Kiro token KV data",
+					zap.String("old_key", oldKVKey),
+					zap.String("new_key", newKVKey))
+			}
+		}
 	}
 
 	// Re-register: unregister old name, register new instance
@@ -460,7 +474,7 @@ func (h *AdminHandler) activateProvider(rec *tenant.ProviderRecord) error {
 		Enabled:      rec.Enabled,
 		BaseURL:      rec.BaseURL,
 		APIKey:       rec.APIKey,
-		GithubTokens: rec.GithubTokens,
+		GithubToken:  rec.GithubToken,
 		Models:       rec.Models,
 		DefaultModel: rec.DefaultModel,
 	}

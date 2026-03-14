@@ -32,7 +32,7 @@ export default function KiroAuthModal({ open, providerName, onClose }: Props) {
   const fetchStatus = async () => {
     setLoading(true);
     try {
-      const res = await getKiroStatus();
+      const res = await getKiroStatus(providerName);
       setStatus(res);
     } catch {
       // Kiro provider may not be configured
@@ -48,12 +48,12 @@ export default function KiroAuthModal({ open, providerName, onClose }: Props) {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [open]);
+  }, [open, providerName]);
 
   const handleLogin = async () => {
     setLoginLoading(true);
     try {
-      const session = await startKiroLogin();
+      const session = await startKiroLogin(providerName);
       setLoginUrl(session.auth_url);
 
       // Open auth URL
@@ -62,10 +62,10 @@ export default function KiroAuthModal({ open, providerName, onClose }: Props) {
       // Poll for completion
       pollRef.current = setInterval(async () => {
         try {
-          const res = await getKiroLoginStatus(session.id);
+          const res = await getKiroLoginStatus(session.id, providerName);
           if (res.status === "completed") {
             clearInterval(pollRef.current);
-            await completeKiroLogin(session.id);
+            await completeKiroLogin(session.id, providerName);
             message.success(t.kiro.loginSuccess);
             setLoginUrl("");
             fetchStatus();
@@ -89,7 +89,7 @@ export default function KiroAuthModal({ open, providerName, onClose }: Props) {
   const handleRefreshToken = async () => {
     setRefreshing(true);
     try {
-      const res = await refreshKiroToken();
+      const res = await refreshKiroToken(providerName);
       setStatus(res);
       message.success(t.kiro.tokenRefreshSuccess);
     } catch {

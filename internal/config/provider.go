@@ -12,7 +12,7 @@ type ProviderConfig struct {
 	APIKey  string `mapstructure:"api_key"`
 
 	// Copilot-specific
-	GithubTokens []string `mapstructure:"github_tokens"` // GitHub OAuth tokens for Copilot
+	GithubToken string `mapstructure:"github_token"` // Single GitHub OAuth token for Copilot
 
 	// Model routing: which models this provider handles
 	// Empty = handles all models (fallback)

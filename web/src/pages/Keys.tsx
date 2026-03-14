@@ -138,7 +138,7 @@ export default function KeysPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     try {
       await deleteKey(id);
       message.success(t.keys.deleteSuccess);

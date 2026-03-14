@@ -71,8 +71,8 @@ var xmlStripPattern = regexp.MustCompile(`(?s)<function_calls[^>]*>.*</function_
 var multiNewline = regexp.MustCompile(`\n{4,}`)
 
 // SanitizeText cleans IDE artifacts from assistant output.
-// isChunk=true preserves leading/trailing whitespace (for streaming).
-func SanitizeText(text string, isChunk bool) string {
+// preserveWhitespace=true keeps leading/trailing whitespace (for streaming chunks).
+func SanitizeText(text string, preserveWhitespace bool) string {
 	if text == "" {
 		return text
 	}
@@ -105,7 +105,7 @@ func SanitizeText(text string, isChunk bool) string {
 	// 4. Compress excessive newlines
 	text = multiNewline.ReplaceAllString(text, "\n\n")
 
-	if !isChunk {
+	if !preserveWhitespace {
 		text = strings.TrimSpace(text)
 	}
 

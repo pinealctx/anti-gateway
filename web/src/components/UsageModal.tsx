@@ -15,7 +15,7 @@ function formatNumber(num: number | undefined): string {
 
 interface Props {
   open: boolean;
-  keyId?: number;
+  keyId?: string;
   keyName?: string;
   onClose: () => void;
 }
@@ -28,7 +28,7 @@ export default function UsageModal({ open, keyId, keyName, onClose }: Props) {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await getUsage(keyId ? { key_id: String(keyId) } : undefined);
+      const res = await getUsage(keyId ? { key_id: keyId } : undefined);
       setData(res.usage ?? []);
     } catch {
       // Error handled by empty state

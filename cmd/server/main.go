@@ -99,7 +99,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 			Enabled:      rec.Enabled,
 			BaseURL:      rec.BaseURL,
 			APIKey:       rec.APIKey,
-			GithubTokens: rec.GithubTokens,
+			GithubToken:  rec.GithubToken,
 			Models:       rec.Models,
 			DefaultModel: rec.DefaultModel,
 		}
@@ -140,6 +140,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Build router config
+	rateLimiter := tenant.NewRateLimiter()
 	routerCfg := routes.RouterConfig{
 		Registry:        registry,
 		Logger:          logger,
@@ -147,7 +148,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		AdminKey:        gwCfg.Auth.AdminKey,
 		Store:           store,
 		TenantAuth:      gwCfg.Tenant.Enabled,
-		RateLimiter:     tenant.NewRateLimiter(),
+		RateLimiter:     rateLimiter,
 		CORSOrigins:     gwCfg.Server.CORSOrigins,
 		ProviderFactory: createProvider,
 	}
@@ -184,6 +185,19 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Stop background goroutines
+	rateLimiter.Stop()
+	for _, p := range registry.All() {
+		// Stop Copilot providers
+		if cp, ok := p.(*copilotProvider.Provider); ok {
+			cp.Stop()
+		}
+		// Stop Kiro providers
+		if kp, ok := p.(*kiro.Provider); ok {
+			kp.Stop()
+		}
+	}
+
 	logger.Info("Server exited gracefully")
 	return nil
 }
@@ -213,9 +227,9 @@ func createProvider(pc config.ProviderConfig, logger *zap.Logger) (providers.AIP
 
 	case "copilot":
 		return copilotProvider.NewProvider(copilotProvider.Config{
-			Name:         pc.Name,
-			GithubTokens: pc.GithubTokens,
-			Logger:       logger,
+			Name:        pc.Name,
+			GithubToken: pc.GithubToken,
+			Logger:      logger,
 		}), nil
 
 	case "anthropic":

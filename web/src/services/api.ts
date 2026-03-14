@@ -53,7 +53,7 @@ export interface ProviderRecord {
   enabled: boolean;
   base_url?: string;
   api_key?: string;
-  github_tokens?: string[];
+  github_token?: string;
   models?: string[];
   default_model?: string;
   healthy?: boolean;
@@ -77,7 +77,7 @@ export const deleteProvider = (id: string) =>
 
 // --- API Keys ---
 export interface ApiKey {
-  id: number;
+  id: string;
   key?: string;
   key_prefix?: string;
   name: string;
@@ -93,16 +93,16 @@ export interface ApiKey {
 export const listKeys = () =>
   request<{ keys: ApiKey[]; total: number }>("GET", "/admin/keys");
 
-export const getKey = (id: number) =>
+export const getKey = (id: string) =>
   request<ApiKey>("GET", `/admin/keys/${id}`);
 
 export const createKey = (data: Partial<ApiKey>) =>
   request<ApiKey>("POST", "/admin/keys", data);
 
-export const updateKey = (id: number, data: Partial<ApiKey>) =>
+export const updateKey = (id: string, data: Partial<ApiKey>) =>
   request<ApiKey>("PUT", `/admin/keys/${id}`, data);
 
-export const deleteKey = (id: number) =>
+export const deleteKey = (id: string) =>
   request<{ deleted: boolean }>("DELETE", `/admin/keys/${id}`);
 
 // --- Usage ---
@@ -146,27 +146,32 @@ export interface DeviceFlowSession {
   status: string;
 }
 
-export interface CopilotAccount {
-  username: string;
-  token_prefix: string;
-  added_at: string;
-  copilot_token_expires: string;
+export interface CopilotStatus {
+  username?: string;
+  healthy: boolean;
+  has_token: boolean;
+  token_expires?: string;
 }
 
-export const startDeviceFlow = () =>
-  request<DeviceFlowSession>("POST", "/admin/auth/device-code");
+export const startDeviceFlow = (provider?: string) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<DeviceFlowSession>("POST", `/admin/auth/device-code${qs}`);
+};
 
-export const pollDeviceFlow = (id: string) =>
-  request<{ id: string; status: string; error?: string }>("GET", `/admin/auth/poll/${id}`);
+export const pollDeviceFlow = (id: string, provider?: string) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<{ id: string; status: string; error?: string }>("GET", `/admin/auth/poll/${id}${qs}`);
+};
 
-export const completeDeviceFlow = (id: string) =>
-  request<{ message: string }>("POST", `/admin/auth/complete/${id}`);
+export const completeDeviceFlow = (id: string, provider?: string) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<{ message: string; provider: string }>("POST", `/admin/auth/complete/${id}${qs}`);
+};
 
-export const listCopilotAccounts = () =>
-  request<{ accounts: CopilotAccount[]; total: number }>("GET", "/admin/copilot/accounts");
-
-export const deleteCopilotAccount = (username: string) =>
-  request<{ deleted: boolean; username: string }>("DELETE", `/admin/copilot/accounts/${encodeURIComponent(username)}`);
+export const getCopilotStatus = (provider?: string) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<CopilotStatus>("GET", `/admin/copilot/status${qs}`);
+};
 
 // --- Kiro ---
 export interface KiroLoginSession {
@@ -183,17 +188,27 @@ export interface KiroStatus {
   expires_at?: string;
 }
 
-export const startKiroLogin = (port?: number) =>
-  request<KiroLoginSession>("POST", "/admin/kiro/login", port ? { port } : undefined);
+export const startKiroLogin = (provider?: string, port?: number) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<KiroLoginSession>("POST", `/admin/kiro/login${qs}`, port ? { port } : undefined);
+};
 
-export const getKiroLoginStatus = (id: string) =>
-  request<{ id: string; status: string; error?: string }>("GET", `/admin/kiro/login/${id}`);
+export const getKiroLoginStatus = (id: string, provider?: string) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<{ id: string; status: string; error?: string }>("GET", `/admin/kiro/login/${id}${qs}`);
+};
 
-export const completeKiroLogin = (id: string) =>
-  request<{ message: string }>("POST", `/admin/kiro/login/complete/${id}`);
+export const completeKiroLogin = (id: string, provider?: string) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<{ message: string; provider: string }>("POST", `/admin/kiro/login/complete/${id}${qs}`);
+};
 
-export const getKiroStatus = () =>
-  request<KiroStatus>("GET", "/admin/kiro/status");
+export const getKiroStatus = (provider?: string) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<KiroStatus>("GET", `/admin/kiro/status${qs}`);
+};
 
-export const refreshKiroToken = () =>
-  request<KiroStatus>("POST", "/admin/kiro/refresh");
+export const refreshKiroToken = (provider?: string) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<KiroStatus>("POST", `/admin/kiro/refresh${qs}`);
+};

@@ -124,8 +124,7 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 		admin.POST("/auth/device-code", copilotH.StartDeviceFlow)
 		admin.GET("/auth/poll/:id", copilotH.PollDeviceFlow)
 		admin.POST("/auth/complete/:id", copilotH.CompleteDeviceFlow)
-		admin.GET("/copilot/accounts", copilotH.ListAccounts)
-		admin.DELETE("/copilot/accounts/:username", copilotH.DeleteAccount)
+		admin.GET("/copilot/status", copilotH.GetStatus)
 
 		// Kiro PKCE login management (dynamic provider lookup)
 		kiroH := handlers.NewKiroAdminHandler(cfg.Registry)

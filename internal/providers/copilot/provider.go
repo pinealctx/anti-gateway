@@ -27,27 +27,20 @@ var retryBackoff = []time.Duration{2 * time.Second, 8 * time.Second, 18 * time.S
 
 // Config holds Copilot provider configuration.
 type Config struct {
-	Name         string
-	GithubTokens []string // One or more GitHub OAuth tokens
-	Logger       *zap.Logger
-}
-
-// Account represents a single GitHub account with Copilot access.
-type Account struct {
-	GithubToken  string
-	CopilotToken *CopilotToken
-	IssuedAt     time.Time
-	Username     string
-	healthy      bool
-	mu           sync.RWMutex
+	Name        string
+	GithubToken string // Single GitHub OAuth token (one provider = one account)
+	Logger      *zap.Logger
 }
 
 // Provider implements AIProvider for GitHub Copilot.
+// Each Provider instance corresponds to exactly one GitHub account.
 type Provider struct {
 	name        string
-	accounts    []*Account
-	accountIdx  int
-	mu          sync.Mutex
+	githubToken string
+	copilot     *copilotToken
+	username    string
+	healthy     bool
+	mu          sync.RWMutex
 	client      *http.Client
 	vsCodeVer   string
 	logger      *zap.Logger
@@ -55,80 +48,76 @@ type Provider struct {
 	stopCh      chan struct{}
 }
 
-// NewProvider creates a new Copilot provider.
-func NewProvider(cfg Config) *Provider {
-	accounts := make([]*Account, 0, len(cfg.GithubTokens))
-	for _, token := range cfg.GithubTokens {
-		if token == "" {
-			continue
-		}
-		accounts = append(accounts, &Account{
-			GithubToken: token,
-			healthy:     true,
-		})
-	}
+type copilotToken struct {
+	token     string
+	expiresAt time.Time
+	issuedAt  time.Time
+}
 
+// NewProvider creates a new Copilot provider with a single GitHub token.
+func NewProvider(cfg Config) *Provider {
 	p := &Provider{
 		name:        cfg.Name,
-		accounts:    accounts,
+		githubToken: cfg.GithubToken,
 		client:      &http.Client{Timeout: providerTimeout},
 		logger:      cfg.Logger,
 		authManager: NewAuthManager(),
 		stopCh:      make(chan struct{}),
+		healthy:     true,
 	}
 
 	// Fetch VSCode version
 	p.vsCodeVer = getVSCodeVersion(p.client)
 	p.logger.Info("Copilot provider initialized",
 		zap.String("name", cfg.Name),
-		zap.Int("accounts", len(accounts)),
 		zap.String("vscode_version", p.vsCodeVer),
 	)
 
-	// Start token refresh loop for all accounts
-	for _, acc := range accounts {
-		go p.tokenRefreshLoop(acc)
+	// Start token refresh loop
+	if cfg.GithubToken != "" {
+		go p.tokenRefreshLoop()
 	}
 
 	return p
 }
 
-// AddAccount adds a new GitHub token to the account pool at runtime.
-func (p *Provider) AddAccount(githubToken string) {
-	acc := &Account{
-		GithubToken: githubToken,
-		healthy:     true,
-	}
-	p.mu.Lock()
-	p.accounts = append(p.accounts, acc)
-	p.mu.Unlock()
-
-	go p.tokenRefreshLoop(acc)
-	p.logger.Info("Added Copilot account", zap.Int("total", len(p.accounts)))
-}
-
-// RemoveAccount removes a GitHub account from the pool by username.
-func (p *Provider) RemoveAccount(username string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	for i, acc := range p.accounts {
-		acc.mu.RLock()
-		name := acc.Username
-		acc.mu.RUnlock()
-
-		if name == username {
-			p.accounts = append(p.accounts[:i], p.accounts[i+1:]...)
-			p.logger.Info("Removed Copilot account", zap.String("username", username), zap.Int("remaining", len(p.accounts)))
-			return true
-		}
-	}
-	return false
-}
-
 // AuthMgr returns the auth manager for device flow operations.
 func (p *Provider) AuthMgr() *AuthManager {
 	return p.authManager
+}
+
+// SetGithubToken updates the GitHub token at runtime (e.g., after device flow completion).
+func (p *Provider) SetGithubToken(token string) {
+	p.mu.Lock()
+	p.githubToken = token
+	p.healthy = true
+	p.mu.Unlock()
+
+	// Trigger immediate token refresh
+	go p.refreshToken()
+}
+
+// GetUsername returns the authenticated username.
+func (p *Provider) GetUsername() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.username
+}
+
+// GetTokenInfo returns current token status for admin display.
+func (p *Provider) GetTokenInfo() map[string]any {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	info := map[string]any{
+		"username": p.username,
+		"healthy":  p.healthy,
+		"has_token": p.copilot != nil && p.copilot.token != "",
+	}
+	if p.copilot != nil {
+		info["token_expires"] = p.copilot.expiresAt.Format(time.RFC3339)
+	}
+	return info
 }
 
 func (p *Provider) Name() string { return p.name }
@@ -217,27 +206,13 @@ func (p *Provider) StreamCompletion(ctx context.Context, req *models.ChatComplet
 }
 
 func (p *Provider) RefreshToken(ctx context.Context) error {
-	p.mu.Lock()
-	accounts := make([]*Account, len(p.accounts))
-	copy(accounts, p.accounts)
-	p.mu.Unlock()
-
-	var lastErr error
-	for _, acc := range accounts {
-		if err := p.refreshAccountToken(acc); err != nil {
-			lastErr = err
-			p.logger.Warn("Token refresh failed",
-				zap.String("username", acc.Username),
-				zap.Error(err),
-			)
-		}
-	}
-	return lastErr
+	return p.refreshToken()
 }
 
 func (p *Provider) IsHealthy(ctx context.Context) bool {
-	_, err := p.pickAccount()
-	return err == nil
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.healthy && p.copilot != nil && p.copilot.token != ""
 }
 
 // Stop shuts down the provider's background goroutines.
@@ -245,64 +220,14 @@ func (p *Provider) Stop() {
 	close(p.stopCh)
 }
 
-// AccountInfo represents account status for admin display.
-type AccountInfo struct {
-	Username    string `json:"username"`
-	Healthy     bool   `json:"healthy"`
-	HasToken    bool   `json:"has_token"`
-	TokenExpiry string `json:"token_expiry,omitempty"`
-}
-
-// ListAccounts returns account status information.
-func (p *Provider) ListAccounts() []AccountInfo {
-	p.mu.Lock()
-	accounts := make([]*Account, len(p.accounts))
-	copy(accounts, p.accounts)
-	p.mu.Unlock()
-
-	result := make([]AccountInfo, len(accounts))
-	for i, acc := range accounts {
-		acc.mu.RLock()
-		info := AccountInfo{
-			Username: acc.Username,
-			Healthy:  acc.healthy,
-			HasToken: acc.CopilotToken != nil && acc.CopilotToken.Token != "",
-		}
-		if acc.CopilotToken != nil {
-			info.TokenExpiry = acc.CopilotToken.ExpiresAt.Format(time.RFC3339)
-		}
-		acc.mu.RUnlock()
-		result[i] = info
+// getToken returns the current copilot token and its health status.
+func (p *Provider) getToken() (string, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.copilot == nil || p.copilot.token == "" {
+		return "", false
 	}
-	return result
-}
-
-// pickAccount selects the next healthy account using round-robin.
-func (p *Provider) pickAccount() (*Account, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if len(p.accounts) == 0 {
-		return nil, fmt.Errorf("no copilot accounts configured")
-	}
-
-	// Round-robin with health check
-	start := p.accountIdx
-	for i := 0; i < len(p.accounts); i++ {
-		idx := (start + i) % len(p.accounts)
-		acc := p.accounts[idx]
-		acc.mu.RLock()
-		hasToken := acc.CopilotToken != nil && acc.CopilotToken.Token != ""
-		isHealthy := acc.healthy
-		acc.mu.RUnlock()
-
-		if hasToken && isHealthy {
-			p.accountIdx = (idx + 1) % len(p.accounts)
-			return acc, nil
-		}
-	}
-
-	return nil, fmt.Errorf("no healthy copilot accounts available")
+	return p.copilot.token, p.healthy
 }
 
 // doWithRetry performs a chat completion request with retries.
@@ -322,15 +247,11 @@ func (p *Provider) doWithRetry(ctx context.Context, body []byte) (io.ReadCloser,
 			}
 		}
 
-		acc, err := p.pickAccount()
-		if err != nil {
-			lastErr = err
+		token, isHealthy := p.getToken()
+		if !isHealthy || token == "" {
+			lastErr = fmt.Errorf("copilot provider not healthy or no token")
 			continue
 		}
-
-		acc.mu.RLock()
-		token := acc.CopilotToken.Token
-		acc.mu.RUnlock()
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", copilotChatURL, bytes.NewReader(body))
 		if err != nil {
@@ -347,18 +268,18 @@ func (p *Provider) doWithRetry(ctx context.Context, body []byte) (io.ReadCloser,
 		}
 
 		if resp.StatusCode == 429 {
-			// Rate limited — mark account as temporarily unhealthy
+			// Rate limited — mark as temporarily unhealthy
 			_ = resp.Body.Close()
-			acc.mu.Lock()
-			acc.healthy = false
-			acc.mu.Unlock()
+			p.mu.Lock()
+			p.healthy = false
+			p.mu.Unlock()
 
-			go func(a *Account) {
+			go func() {
 				time.Sleep(30 * time.Second)
-				a.mu.Lock()
-				a.healthy = true
-				a.mu.Unlock()
-			}(acc)
+				p.mu.Lock()
+				p.healthy = true
+				p.mu.Unlock()
+			}()
 
 			lastErr = fmt.Errorf("copilot rate limited (429)")
 			continue
@@ -384,11 +305,11 @@ func (p *Provider) doWithRetry(ctx context.Context, body []byte) (io.ReadCloser,
 }
 
 // tokenRefreshLoop runs a background goroutine that keeps the Copilot token fresh.
-func (p *Provider) tokenRefreshLoop(acc *Account) {
+func (p *Provider) tokenRefreshLoop() {
 	// Initial token fetch
-	if err := p.refreshAccountToken(acc); err != nil {
+	if err := p.refreshToken(); err != nil {
 		p.logger.Error("Initial copilot token fetch failed",
-			zap.String("token_prefix", acc.GithubToken[:min(8, len(acc.GithubToken))]),
+			zap.String("provider", p.name),
 			zap.Error(err),
 		)
 	}
@@ -401,14 +322,15 @@ func (p *Provider) tokenRefreshLoop(acc *Account) {
 		case <-p.stopCh:
 			return
 		case <-ticker.C:
-			acc.mu.RLock()
-			needsRefresh := acc.CopilotToken == nil || acc.CopilotToken.NeedsRefresh(acc.IssuedAt)
-			acc.mu.RUnlock()
+			p.mu.RLock()
+			needsRefresh := p.copilot == nil || p.copilot.needsRefresh()
+			p.mu.RUnlock()
 
 			if needsRefresh {
-				if err := p.refreshAccountToken(acc); err != nil {
+				if err := p.refreshToken(); err != nil {
 					p.logger.Warn("Copilot token refresh failed",
-						zap.String("username", acc.Username),
+						zap.String("provider", p.name),
+						zap.String("username", p.username),
 						zap.Error(err),
 					)
 				}
@@ -417,41 +339,55 @@ func (p *Provider) tokenRefreshLoop(acc *Account) {
 	}
 }
 
-// refreshAccountToken fetches a fresh Copilot JWT for an account.
-func (p *Provider) refreshAccountToken(acc *Account) error {
-	tokenResp, err := RefreshCopilotToken(p.client, acc.GithubToken, p.vsCodeVer)
+// refreshToken fetches a fresh Copilot JWT.
+func (p *Provider) refreshToken() error {
+	p.mu.RLock()
+	githubToken := p.githubToken
+	p.mu.RUnlock()
+
+	if githubToken == "" {
+		return fmt.Errorf("no github token configured")
+	}
+
+	tokenResp, err := RefreshCopilotToken(p.client, githubToken, p.vsCodeVer)
 	if err != nil {
-		acc.mu.Lock()
-		acc.healthy = false
-		acc.mu.Unlock()
+		p.mu.Lock()
+		p.healthy = false
+		p.mu.Unlock()
 		return err
 	}
 
 	expiresAt := time.Unix(tokenResp.ExpiresAt, 0)
 
-	acc.mu.Lock()
-	acc.CopilotToken = &CopilotToken{
-		Token:     tokenResp.Token,
-		ExpiresAt: expiresAt,
+	p.mu.Lock()
+	p.copilot = &copilotToken{
+		token:     tokenResp.Token,
+		expiresAt: expiresAt,
+		issuedAt:  time.Now(),
 	}
-	acc.IssuedAt = time.Now()
-	acc.healthy = true
-	acc.mu.Unlock()
+	p.healthy = true
+	p.mu.Unlock()
 
 	// Fetch username if not set
-	if acc.Username == "" {
-		if user, err := FetchGithubUser(p.client, acc.GithubToken, p.vsCodeVer); err == nil {
-			acc.mu.Lock()
-			acc.Username = user.Login
-			acc.mu.Unlock()
+	p.mu.RLock()
+	username := p.username
+	p.mu.RUnlock()
+
+	if username == "" {
+		if user, err := FetchGithubUser(p.client, githubToken, p.vsCodeVer); err == nil {
+			p.mu.Lock()
+			p.username = user.Login
+			p.mu.Unlock()
 			p.logger.Info("Copilot account authenticated",
+				zap.String("provider", p.name),
 				zap.String("username", user.Login),
 				zap.Time("token_expires", expiresAt),
 			)
 		}
 	} else {
 		p.logger.Debug("Copilot token refreshed",
-			zap.String("username", acc.Username),
+			zap.String("provider", p.name),
+			zap.String("username", username),
 			zap.Time("expires", expiresAt),
 		)
 	}
@@ -461,14 +397,10 @@ func (p *Provider) refreshAccountToken(acc *Account) error {
 
 // FetchModels queries the Copilot models endpoint.
 func (p *Provider) FetchModels(ctx context.Context) ([]string, error) {
-	acc, err := p.pickAccount()
-	if err != nil {
-		return nil, err
+	token, isHealthy := p.getToken()
+	if !isHealthy || token == "" {
+		return nil, fmt.Errorf("provider not healthy")
 	}
-
-	acc.mu.RLock()
-	token := acc.CopilotToken.Token
-	acc.mu.RUnlock()
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", copilotModelsURL, nil)
 	if err != nil {
@@ -500,14 +432,10 @@ func (p *Provider) FetchModels(ctx context.Context) ([]string, error) {
 
 // CreateEmbedding implements EmbeddingProvider for Copilot.
 func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error) {
-	acc, err := p.pickAccount()
-	if err != nil {
-		return nil, err
+	token, isHealthy := p.getToken()
+	if !isHealthy || token == "" {
+		return nil, fmt.Errorf("provider not healthy")
 	}
-
-	acc.mu.RLock()
-	token := acc.CopilotToken.Token
-	acc.mu.RUnlock()
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -537,4 +465,13 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 		return nil, fmt.Errorf("decode embedding response: %w", err)
 	}
 	return &embResp, nil
+}
+
+// needsRefresh checks if the token needs to be refreshed.
+func (t *copilotToken) needsRefresh() bool {
+	if t == nil {
+		return true
+	}
+	// Refresh if expired or will expire in next 10 minutes
+	return time.Now().Add(10 * time.Minute).After(t.expiresAt)
 }

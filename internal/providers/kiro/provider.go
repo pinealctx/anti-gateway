@@ -20,8 +20,6 @@ type KVStore interface {
 	SetKV(key, value string) error
 }
 
-const kvKeyKiroToken = "kiro:login_token"
-
 // Provider implements the AIProvider interface for Kiro/CodeWhisperer.
 type Provider struct {
 	name       string
@@ -31,20 +29,30 @@ type Provider struct {
 	logger     *zap.Logger
 	profileArn string
 	kvStore    KVStore
+	stopCh     chan struct{}
 }
 
 // NewProvider creates a Kiro provider using the built-in PKCE login flow.
 func NewProvider(name string, logger *zap.Logger) *Provider {
 	tm := NewTokenManager(logger)
-	tm.StartBackgroundRefresh(2 * time.Minute)
 
-	return &Provider{
+	p := &Provider{
 		name:     name,
 		tokenMgr: tm,
 		client:   NewCWClient(logger),
 		authMgr:  NewKiroAuthManager(logger),
 		logger:   logger,
+		stopCh:   make(chan struct{}),
 	}
+
+	tm.StartBackgroundRefreshWithStop(2*time.Minute, p.stopCh)
+
+	return p
+}
+
+// kvKeyToken returns the provider-specific key for token persistence.
+func (p *Provider) kvKeyToken() string {
+	return "kiro:" + p.name + ":token"
 }
 
 // AuthMgr returns the Kiro auth manager for PKCE login management.
@@ -95,7 +103,7 @@ func (p *Provider) persistToken(lt *LoginToken) {
 		p.logger.Error("failed to marshal token for persistence", zap.Error(err))
 		return
 	}
-	if err := p.kvStore.SetKV(kvKeyKiroToken, string(data)); err != nil {
+	if err := p.kvStore.SetKV(p.kvKeyToken(), string(data)); err != nil {
 		p.logger.Error("failed to persist kiro token", zap.Error(err))
 	}
 }
@@ -106,7 +114,7 @@ func (p *Provider) RestoreToken() bool {
 	if p.kvStore == nil {
 		return false
 	}
-	data, ok := p.kvStore.GetKV(kvKeyKiroToken)
+	data, ok := p.kvStore.GetKV(p.kvKeyToken())
 	if !ok || data == "" {
 		return false
 	}
@@ -296,4 +304,9 @@ func (p *Provider) RefreshToken(ctx context.Context) error {
 func (p *Provider) IsHealthy(ctx context.Context) bool {
 	_, err := p.tokenMgr.GetToken()
 	return err == nil
+}
+
+// Stop shuts down the provider's background goroutines.
+func (p *Provider) Stop() {
+	close(p.stopCh)
 }

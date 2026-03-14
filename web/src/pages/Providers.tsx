@@ -100,7 +100,6 @@ export default function ProvidersPage() {
     form.setFieldsValue({
       ...record,
       models: record.models?.join(", ") ?? "",
-      github_tokens: record.github_tokens?.join("\n") ?? "",
     });
     setModalOpen(true);
   };
@@ -125,15 +124,8 @@ export default function ProvidersPage() {
             .map((s: string) => s.trim())
             .filter(Boolean)
         : undefined;
-      // Parse newline-separated github tokens
-      const github_tokens = values.github_tokens
-        ? String(values.github_tokens)
-            .split("\n")
-            .map((s: string) => s.trim())
-            .filter(Boolean)
-        : undefined;
 
-      const payload = { ...values, models, github_tokens };
+      const payload = { ...values, models };
 
       if (editing) {
         await updateProvider(editing.id, payload);
@@ -252,7 +244,7 @@ export default function ProvidersPage() {
         <Space size="small">
           {/* Type-specific auth actions */}
           {record.type === "copilot" && (
-            <Tooltip title={t.copilot.addAccount}>
+            <Tooltip title={t.copilot.authorize}>
               <Button
                 type="link"
                 size="small"
@@ -386,11 +378,10 @@ export default function ProvidersPage() {
           )}
           {selectedType === "copilot" && (
             <Form.Item
-              name="github_tokens"
-              label={t.providers.fieldGithubTokens}
-              tooltip={t.providers.fieldGithubTokensTooltip}
+              name="github_token"
+              label={t.providers.fieldGithubToken}
             >
-              <Input.TextArea rows={3} placeholder={t.providers.fieldGithubTokensPlaceholder} />
+              <Input.Password placeholder={t.providers.fieldGithubTokenPlaceholder} />
             </Form.Item>
           )}
           <Form.Item name="models" label={t.providers.fieldModels}>

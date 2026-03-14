@@ -17,8 +17,17 @@ func NewCopilotAdminHandler(registry *providers.Registry) *CopilotAdminHandler {
 	return &CopilotAdminHandler{registry: registry}
 }
 
-// findCopilotProvider dynamically finds the first Copilot provider from the registry.
-func (h *CopilotAdminHandler) findCopilotProvider() *copilotProvider.Provider {
+// findCopilotProvider finds a Copilot provider by name, or the first one if name is empty.
+func (h *CopilotAdminHandler) findCopilotProvider(name string) *copilotProvider.Provider {
+	if name != "" {
+		if p, ok := h.registry.Get(name); ok {
+			if cp, ok := p.(*copilotProvider.Provider); ok {
+				return cp
+			}
+		}
+		return nil
+	}
+	// Find first Copilot provider
 	for _, p := range h.registry.All() {
 		if cp, ok := p.(*copilotProvider.Provider); ok {
 			return cp
@@ -28,9 +37,10 @@ func (h *CopilotAdminHandler) findCopilotProvider() *copilotProvider.Provider {
 }
 
 // StartDeviceFlow initiates a GitHub device code flow.
-// POST /admin/auth/device-code
+// POST /admin/auth/device-code?provider=<name>
 func (h *CopilotAdminHandler) StartDeviceFlow(c *gin.Context) {
-	provider := h.findCopilotProvider()
+	providerName := c.Query("provider")
+	provider := h.findCopilotProvider(providerName)
 	if provider == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no copilot provider configured"})
 		return
@@ -53,9 +63,10 @@ func (h *CopilotAdminHandler) StartDeviceFlow(c *gin.Context) {
 }
 
 // PollDeviceFlow checks the status of a device flow session.
-// GET /admin/auth/poll/:id
+// GET /admin/auth/poll/:id?provider=<name>
 func (h *CopilotAdminHandler) PollDeviceFlow(c *gin.Context) {
-	provider := h.findCopilotProvider()
+	providerName := c.Query("provider")
+	provider := h.findCopilotProvider(providerName)
 	if provider == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no copilot provider configured"})
 		return
@@ -84,10 +95,11 @@ func (h *CopilotAdminHandler) PollDeviceFlow(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// CompleteDeviceFlow finalizes a device flow by adding the token to the pool.
-// POST /admin/auth/complete/:id
+// CompleteDeviceFlow finalizes a device flow by setting the token on the provider.
+// POST /admin/auth/complete/:id?provider=<name>
 func (h *CopilotAdminHandler) CompleteDeviceFlow(c *gin.Context) {
-	provider := h.findCopilotProvider()
+	providerName := c.Query("provider")
+	provider := h.findCopilotProvider(providerName)
 	if provider == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no copilot provider configured"})
 		return
@@ -115,55 +127,25 @@ func (h *CopilotAdminHandler) CompleteDeviceFlow(c *gin.Context) {
 		return
 	}
 
-	// Add the new account to the Copilot provider pool
-	provider.AddAccount(token)
+	// Set the GitHub token on the provider (single account per provider)
+	provider.SetGithubToken(token)
 	provider.AuthMgr().RemoveSession(id)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Account added to Copilot pool",
+		"message":  "Copilot token activated",
+		"provider": provider.Name(),
 	})
 }
 
-// ListAccounts shows current Copilot accounts and their status.
-// GET /admin/copilot/accounts
-func (h *CopilotAdminHandler) ListAccounts(c *gin.Context) {
-	provider := h.findCopilotProvider()
+// GetStatus shows the current Copilot provider token status.
+// GET /admin/copilot/status?provider=<name>
+func (h *CopilotAdminHandler) GetStatus(c *gin.Context) {
+	providerName := c.Query("provider")
+	provider := h.findCopilotProvider(providerName)
 	if provider == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no copilot provider configured"})
 		return
 	}
 
-	accounts := provider.ListAccounts()
-	c.JSON(http.StatusOK, gin.H{
-		"accounts": accounts,
-		"total":    len(accounts),
-	})
-}
-
-// DeleteAccount removes a Copilot account from the pool.
-// DELETE /admin/copilot/accounts/:username
-func (h *CopilotAdminHandler) DeleteAccount(c *gin.Context) {
-	provider := h.findCopilotProvider()
-	if provider == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no copilot provider configured"})
-		return
-	}
-
-	username := c.Param("username")
-	if username == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "username is required"})
-		return
-	}
-
-	if provider.RemoveAccount(username) {
-		c.JSON(http.StatusOK, gin.H{
-			"deleted":  true,
-			"username": username,
-		})
-	} else {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error":    "account not found",
-			"username": username,
-		})
-	}
+	c.JSON(http.StatusOK, provider.GetTokenInfo())
 }

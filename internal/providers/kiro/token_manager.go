@@ -276,3 +276,26 @@ func (tm *TokenManager) StartBackgroundRefresh(interval time.Duration) {
 		}
 	}()
 }
+
+// StartBackgroundRefreshWithStop runs a goroutine that periodically refreshes the token,
+// and stops when the provided channel is closed.
+func (tm *TokenManager) StartBackgroundRefreshWithStop(interval time.Duration, stopCh <-chan struct{}) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				// Skip refresh if no token source is configured yet (no one has logged in)
+				if !tm.HasToken() {
+					continue
+				}
+				if _, err := tm.refresh(); err != nil {
+					tm.logger.Error("background token refresh failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+}
