@@ -158,7 +158,7 @@ func readLegacyIdCToken(db *sql.DB) (*LoginToken, error) {
 		ClientSecret:  clientSecret,
 		TokenEndpoint: "https://oidc.us-east-1.amazonaws.com/token", // legacy default
 		ExpiresAt:     expiresAt,
-		IsExternalIdP: true,
+		IsExternalIdP: false,
 		ProfileArn:    profileArn,
 	}, nil
 }

@@ -315,6 +315,19 @@ func (p *Provider) IsHealthy(ctx context.Context) bool {
 	return err == nil
 }
 
+// GetTokenInfo returns current token status for admin display.
+func (p *Provider) GetTokenInfo() map[string]any {
+	hasToken := p.tokenMgr.HasToken()
+	info := map[string]any{
+		"healthy":   hasToken,
+		"has_token": hasToken,
+	}
+	if p.profileArn != "" {
+		info["profile_arn"] = p.profileArn
+	}
+	return info
+}
+
 // Stop shuts down the provider's background goroutines.
 func (p *Provider) Stop() {
 	close(p.stopCh)

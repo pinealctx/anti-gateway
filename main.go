@@ -218,13 +218,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// Stop background goroutines
 	rateLimiter.Stop()
 	for _, p := range registry.All() {
-		// Stop Copilot providers
-		if cp, ok := p.(*copilotProvider.Provider); ok {
-			cp.Stop()
-		}
-		// Stop Kiro providers
-		if kp, ok := p.(*kiro.Provider); ok {
-			kp.Stop()
+		if s, ok := p.(providers.Stoppable); ok {
+			s.Stop()
 		}
 	}
 

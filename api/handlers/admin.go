@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pinealctx/anti-gateway/config"
 	"github.com/pinealctx/anti-gateway/core/providers"
+	"github.com/pinealctx/anti-gateway/providers/kiro"
 	"github.com/pinealctx/anti-gateway/tenant"
 	"go.uber.org/zap"
 )
@@ -287,21 +288,25 @@ func (h *AdminHandler) ListProviders(c *gin.Context) {
 	records := h.store.ListProviderRecords()
 
 	type providerInfo struct {
-		ID           string   `json:"id"`
-		Name         string   `json:"name"`
-		Type         string   `json:"type"`
-		Weight       int      `json:"weight"`
-		Enabled      bool     `json:"enabled"`
-		BaseURL      string   `json:"base_url,omitempty"`
-		Models       []string `json:"models,omitempty"`
-		DefaultModel string   `json:"default_model,omitempty"`
-		Healthy      bool     `json:"healthy"`
-		CreatedAt    string   `json:"created_at"`
+		ID           string         `json:"id"`
+		Name         string         `json:"name"`
+		Type         string         `json:"type"`
+		Weight       int            `json:"weight"`
+		Enabled      bool           `json:"enabled"`
+		BaseURL      string         `json:"base_url,omitempty"`
+		Models       []string       `json:"models,omitempty"`
+		DefaultModel string         `json:"default_model,omitempty"`
+		Healthy      bool           `json:"healthy"`
+		CreatedAt    string         `json:"created_at"`
+		TokenInfo    map[string]any `json:"token_info,omitempty"`
 	}
+
+	// Collect live providers for token info lookup
+	runtimeAll := h.registry.All()
 
 	result := make([]providerInfo, 0, len(records))
 	for _, r := range records {
-		result = append(result, providerInfo{
+		info := providerInfo{
 			ID:           r.ID,
 			Name:         r.Name,
 			Type:         r.Type,
@@ -312,21 +317,31 @@ func (h *AdminHandler) ListProviders(c *gin.Context) {
 			DefaultModel: r.DefaultModel,
 			Healthy:      h.registry.IsHealthy(r.Name),
 			CreatedAt:    r.CreatedAt.Format(time.RFC3339),
-		})
+		}
+		// Enrich with token/auth info from live provider
+		if p, ok := runtimeAll[r.Name]; ok {
+			if tip, ok := p.(providers.TokenInfoProvider); ok {
+				info.TokenInfo = tip.GetTokenInfo()
+			}
+		}
+		result = append(result, info)
 	}
 
 	// Also include runtime-only providers (registered via config but not in DB)
-	runtimeAll := h.registry.All()
 	dbNames := make(map[string]bool, len(records))
 	for _, r := range records {
 		dbNames[r.Name] = true
 	}
-	for name := range runtimeAll {
+	for name, p := range runtimeAll {
 		if !dbNames[name] {
-			result = append(result, providerInfo{
+			info := providerInfo{
 				Name:    name,
 				Healthy: h.registry.IsHealthy(name),
-			})
+			}
+			if tip, ok := p.(providers.TokenInfoProvider); ok {
+				info.TokenInfo = tip.GetTokenInfo()
+			}
+			result = append(result, info)
 		}
 	}
 
@@ -472,6 +487,14 @@ func (h *AdminHandler) DeleteProvider(c *gin.Context) {
 		return
 	}
 
+	// Clean up associated token/auth data from kv_store
+	if rec.Type == "kiro" {
+		kvKey := "kiro:" + rec.Name + ":token"
+		if err := h.store.DeleteKV(kvKey); err != nil {
+			h.logger.Warn("Failed to clean up Kiro token data", zap.String("key", kvKey), zap.Error(err))
+		}
+	}
+
 	h.logger.Info("Provider deleted via admin API", zap.String("name", rec.Name))
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
@@ -493,7 +516,25 @@ func (h *AdminHandler) activateProvider(rec *tenant.ProviderRecord) error {
 	if err != nil {
 		return err
 	}
+
+	// Inject store and restore persisted tokens for Kiro providers
+	if kp, ok := p.(*kiro.Provider); ok {
+		kp.SetStore(h.store)
+		if kp.RestoreToken() {
+			h.logger.Info("Provider token restored from persistent storage", zap.String("name", rec.Name))
+		}
+	}
+
 	h.registry.RegisterWithConfig(p, rec.Weight, rec.Models)
+
+	// Schedule a deferred health check — new providers (especially Copilot)
+	// need time for async token refresh before their health status is accurate.
+	name := rec.Name
+	go func() {
+		time.Sleep(5 * time.Second)
+		h.registry.CheckHealthFor(name)
+	}()
+
 	return nil
 }
 

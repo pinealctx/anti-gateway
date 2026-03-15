@@ -42,6 +42,16 @@ type EmbeddingProvider interface {
 	CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error)
 }
 
+// Stoppable is an optional interface for providers with background goroutines.
+type Stoppable interface {
+	Stop()
+}
+
+// TokenInfoProvider is an optional interface for providers that expose token/auth status.
+type TokenInfoProvider interface {
+	GetTokenInfo() map[string]any
+}
+
 // ProviderEntry wraps a provider with routing metadata.
 type ProviderEntry struct {
 	Provider AIProvider
@@ -119,11 +129,18 @@ func (r *Registry) RegisterWithConfig(p AIProvider, weight int, modelList []stri
 	}
 }
 
-// Unregister removes a provider from the registry.
+// Unregister removes a provider from the registry and stops its background goroutines.
 func (r *Registry) Unregister(name string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	old := r.entries[name]
 	delete(r.entries, name)
+	r.mu.Unlock()
+
+	if old != nil {
+		if s, ok := old.Provider.(Stoppable); ok {
+			s.Stop()
+		}
+	}
 }
 
 // Get returns a specific provider by name.
@@ -284,6 +301,20 @@ func (r *Registry) All() map[string]AIProvider {
 		result[name] = e.Provider
 	}
 	return result
+}
+
+// CheckHealthFor runs an immediate health check for a single provider.
+func (r *Registry) CheckHealthFor(name string) {
+	r.mu.RLock()
+	entry, ok := r.entries[name]
+	r.mu.RUnlock()
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	healthy := entry.Provider.IsHealthy(ctx)
+	cancel()
+	r.SetHealthy(name, healthy)
 }
 
 // SetHealthy updates the health status of a provider.

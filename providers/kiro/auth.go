@@ -84,12 +84,13 @@ func (s *KiroLoginSession) Mu() *sync.Mutex {
 	return &s.mu
 }
 
-// IsExternalIdP reports whether this session used an external IdP or Builder ID login.
-// Both require TokenType: EXTERNAL_IDP when calling CodeWhisperer.
+// IsExternalIdP reports whether this session used an external IdP (e.g. Microsoft OAuth2).
+// Only external IdP tokens require TokenType: EXTERNAL_IDP when calling CodeWhisperer.
+// Builder ID (AWS IdC) tokens must NOT have this header.
 func (s *KiroLoginSession) IsExternalIdP() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.externalIdP || s.builderID
+	return s.externalIdP
 }
 
 // KiroAuthManager manages Kiro PKCE login flows.
