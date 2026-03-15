@@ -43,6 +43,7 @@ type TokenManager struct {
 	logger     *zap.Logger
 	client     *http.Client
 	loginToken *LoginToken
+	onRefresh  func(*LoginToken) // called after each successful token refresh
 }
 
 func NewTokenManager(logger *zap.Logger) *TokenManager {
@@ -50,6 +51,14 @@ func NewTokenManager(logger *zap.Logger) *TokenManager {
 		logger: logger,
 		client: &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// SetOnRefresh registers a callback invoked after each successful token refresh.
+// The callback receives the updated LoginToken (with new RefreshToken if rotated).
+func (tm *TokenManager) SetOnRefresh(fn func(*LoginToken)) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.onRefresh = fn
 }
 
 // SetLoginToken injects a token obtained from the built-in PKCE login flow.
@@ -125,6 +134,10 @@ func (tm *TokenManager) refresh() (*TokenInfo, error) {
 		if err == nil {
 			tm.current = token
 			tm.logger.Info("token refreshed (login)", zap.Time("expires_at", token.ExpiresAt))
+			if tm.onRefresh != nil {
+				lt := tm.loginToken
+				go tm.onRefresh(lt)
+			}
 			return token, nil
 		}
 		tm.logger.Warn("login token refresh failed", zap.Error(err))

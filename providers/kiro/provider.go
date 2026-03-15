@@ -45,6 +45,12 @@ func NewProvider(name string, logger *zap.Logger) *Provider {
 		stopCh:   make(chan struct{}),
 	}
 
+	// Re-persist token after each background refresh so the KV store always
+	// holds the latest RefreshToken (important when the IdP rotates tokens).
+	tm.SetOnRefresh(func(lt *LoginToken) {
+		p.persistToken(lt)
+	})
+
 	tm.StartBackgroundRefreshWithStop(2*time.Minute, p.stopCh)
 
 	return p
