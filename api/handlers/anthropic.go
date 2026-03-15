@@ -163,6 +163,7 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 	textClosed := false
 	hasToolUse := false
 	continueCount := 0
+	toolBlockOpen := false // track whether a tool_use content block is open
 
 	for continueCount <= continuation.MaxContinuations {
 		stream := make(chan providers.StreamChunk, 64)
@@ -193,6 +194,11 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 			}
 
 			if chunk.Content != "" {
+				// Close tool block if open before starting text
+				if toolBlockOpen {
+					_ = writer.WriteContentBlockStop()
+					toolBlockOpen = false
+				}
 				if !textStarted {
 					if err := writer.WriteContentBlockStart(); err != nil {
 						return
@@ -206,7 +212,6 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 			}
 
 			if len(chunk.ToolCalls) > 0 {
-				middleware.ToolCallsTotal.Add(float64(len(chunk.ToolCalls)))
 				hasToolUse = true
 
 				// Close text block if open
@@ -218,23 +223,47 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 				}
 
 				for _, tc := range chunk.ToolCalls {
-					if err := writer.WriteToolUseBlockStart(tc.ID, tc.Function.Name); err != nil {
-						return
+					// tc.ID != "" means a new tool_call is starting
+					// (subsequent deltas for the same call have empty ID)
+					if tc.ID != "" {
+						// Close previous tool block if open
+						if toolBlockOpen {
+							if err := writer.WriteContentBlockStop(); err != nil {
+								return
+							}
+						}
+						if err := writer.WriteToolUseBlockStart(tc.ID, tc.Function.Name); err != nil {
+							return
+						}
+						toolBlockOpen = true
+						middleware.ToolCallsTotal.Inc()
 					}
+
+					// Append arguments delta to current block
 					if tc.Function.Arguments != "" {
 						if err := writer.WriteToolUseInputDelta(tc.Function.Arguments); err != nil {
 							return
 						}
 					}
-					if err := writer.WriteContentBlockStop(); err != nil {
-						return
-					}
 				}
 			}
 
-			if chunk.FinishReason == "length" {
-				truncated = true
+			if chunk.FinishReason != "" {
+				// Close tool block if open
+				if toolBlockOpen {
+					_ = writer.WriteContentBlockStop()
+					toolBlockOpen = false
+				}
+				if chunk.FinishReason == "length" {
+					truncated = true
+				}
 			}
+		}
+
+		// Close any tool block left open (e.g., stream ended without finish_reason)
+		if toolBlockOpen {
+			_ = writer.WriteContentBlockStop()
+			toolBlockOpen = false
 		}
 
 		if truncated && !hasToolUse && continueCount < continuation.MaxContinuations && continuation.ShouldAutoContinue(fullOutput, req.Messages) {

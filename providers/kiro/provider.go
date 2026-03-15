@@ -83,6 +83,7 @@ type persistedToken struct {
 	AccessToken   string    `json:"access_token"`
 	RefreshToken  string    `json:"refresh_token"`
 	ClientID      string    `json:"client_id"`
+	ClientSecret  string    `json:"client_secret,omitempty"` // non-empty for AWS OIDC (Builder ID)
 	TokenEndpoint string    `json:"token_endpoint"`
 	ExpiresAt     time.Time `json:"expires_at"`
 	IsExternalIdP bool      `json:"is_external_idp"`
@@ -98,6 +99,7 @@ func (p *Provider) persistToken(lt *LoginToken) {
 		AccessToken:   lt.AccessToken,
 		RefreshToken:  lt.RefreshToken,
 		ClientID:      lt.ClientID,
+		ClientSecret:  lt.ClientSecret,
 		TokenEndpoint: lt.TokenEndpoint,
 		ExpiresAt:     lt.ExpiresAt,
 		IsExternalIdP: lt.IsExternalIdP,
@@ -134,6 +136,7 @@ func (p *Provider) RestoreToken() bool {
 		AccessToken:   pt.AccessToken,
 		RefreshToken:  pt.RefreshToken,
 		ClientID:      pt.ClientID,
+		ClientSecret:  pt.ClientSecret,
 		TokenEndpoint: pt.TokenEndpoint,
 		ExpiresAt:     pt.ExpiresAt,
 		IsExternalIdP: pt.IsExternalIdP,

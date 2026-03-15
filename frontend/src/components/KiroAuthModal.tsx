@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { Modal, Typography, Button, Descriptions, Tag, Space, App, Empty } from "antd";
-import { ThunderboltOutlined, ReloadOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined } from "@ant-design/icons";
+import { ThunderboltOutlined, ReloadOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined, ImportOutlined } from "@ant-design/icons";
 import {
   startKiroLogin,
   getKiroLoginStatus,
   completeKiroLogin,
   getKiroStatus,
   refreshKiroToken,
+  importKiroLocal,
   type KiroStatus,
 } from "@/services/api";
 import { useT } from "@/locales";
@@ -25,6 +26,7 @@ export default function KiroAuthModal({ open, providerName, onClose }: Props) {
   const [loginUrl, setLoginUrl] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [importing, setImporting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const { message } = App.useApp();
   const t = useT();
@@ -99,6 +101,19 @@ export default function KiroAuthModal({ open, providerName, onClose }: Props) {
     }
   };
 
+  const handleImportLocal = async () => {
+    setImporting(true);
+    try {
+      await importKiroLocal(providerName);
+      message.success(t.kiro.importLocalSuccess);
+      fetchStatus();
+    } catch {
+      message.error(t.kiro.importLocalFailed);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const handleClose = () => {
     if (pollRef.current) clearInterval(pollRef.current);
     setLoginUrl("");
@@ -116,7 +131,7 @@ export default function KiroAuthModal({ open, providerName, onClose }: Props) {
       open={open}
       onCancel={handleClose}
       footer={null}
-      width={560}
+      width={720}
       destroyOnClose
     >
       {/* Login Pending Section */}
@@ -136,20 +151,28 @@ export default function KiroAuthModal({ open, providerName, onClose }: Props) {
       )}
 
       {/* Actions */}
-      <div className="flex items-center justify-between mb-4">
-        <Text type="secondary">{t.kiro.statusTitle}</Text>
-        <Space>
+      <div className="mb-5">
+        <div className="flex items-center justify-between mb-3">
+          <Text type="secondary" className="text-base">{t.kiro.statusTitle}</Text>
           <Button icon={<ReloadOutlined />} onClick={fetchStatus} loading={loading} size="small">
             {t.common.refresh}
           </Button>
+        </div>
+        <Space wrap>
           <Button
             icon={<SyncOutlined />}
             onClick={handleRefreshToken}
             loading={refreshing}
             disabled={!status?.has_login}
-            size="small"
           >
             {t.kiro.refreshToken}
+          </Button>
+          <Button
+            icon={<ImportOutlined />}
+            onClick={handleImportLocal}
+            loading={importing}
+          >
+            {t.kiro.importLocal}
           </Button>
           <Button
             type="primary"
@@ -157,7 +180,6 @@ export default function KiroAuthModal({ open, providerName, onClose }: Props) {
             onClick={handleLogin}
             loading={loginLoading}
             disabled={!!loginUrl}
-            size="small"
           >
             {t.kiro.pkceLogin}
           </Button>

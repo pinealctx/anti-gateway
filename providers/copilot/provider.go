@@ -40,6 +40,7 @@ type Provider struct {
 	copilot     *copilotToken
 	username    string
 	healthy     bool
+	models      []string // dynamically fetched from Copilot API
 	mu          sync.RWMutex
 	client      *http.Client
 	vsCodeVer   string
@@ -52,6 +53,7 @@ type copilotToken struct {
 	token     string
 	expiresAt time.Time
 	issuedAt  time.Time
+	apiBase   string // from endpoints.api in token response
 }
 
 // NewProvider creates a new Copilot provider with a single GitHub token.
@@ -118,6 +120,7 @@ func (p *Provider) GetTokenInfo() map[string]any {
 		"username":  p.username,
 		"healthy":   p.healthy,
 		"has_token": p.copilot != nil && p.copilot.token != "",
+		"models":    p.models,
 	}
 	if p.copilot != nil {
 		info["token_expires"] = p.copilot.expiresAt.Format(time.RFC3339)
@@ -130,6 +133,7 @@ func (p *Provider) Name() string { return p.name }
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	req.Model = toCopilotModel(req.Model)
 	req.Stream = false
+	sanitizeMessages(req)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -154,6 +158,43 @@ func (p *Provider) StreamCompletion(ctx context.Context, req *models.ChatComplet
 
 	req.Model = toCopilotModel(req.Model)
 	req.Stream = true
+
+	// Debug: log messages BEFORE sanitize
+	for mi, msg := range req.Messages {
+		if len(msg.ToolCalls) > 0 {
+			for ti, tc := range msg.ToolCalls {
+				p.logger.Debug("pre-sanitize tool_call",
+					zap.Int("msg_idx", mi),
+					zap.Int("tc_idx", ti),
+					zap.String("tc_id", tc.ID),
+					zap.String("func_name", tc.Function.Name),
+				)
+			}
+		}
+		if msg.Role == "tool" {
+			p.logger.Debug("pre-sanitize tool_response",
+				zap.Int("msg_idx", mi),
+				zap.String("tool_call_id", msg.ToolCallID),
+			)
+		}
+	}
+
+	sanitizeMessages(req)
+
+	// Debug: log messages AFTER sanitize
+	for mi, msg := range req.Messages {
+		if len(msg.ToolCalls) > 0 {
+			for ti, tc := range msg.ToolCalls {
+				p.logger.Debug("post-sanitize tool_call",
+					zap.Int("msg_idx", mi),
+					zap.Int("tc_idx", ti),
+					zap.String("tc_id", tc.ID),
+					zap.String("func_name", tc.Function.Name),
+					zap.String("arguments", tc.Function.Arguments),
+				)
+			}
+		}
+	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -196,6 +237,14 @@ func (p *Provider) StreamCompletion(ctx context.Context, req *models.ChatComplet
 				sc.Content = choice.Delta.Content
 			}
 			if len(choice.Delta.ToolCalls) > 0 {
+				for _, tc := range choice.Delta.ToolCalls {
+					p.logger.Debug("response tool_call delta",
+						zap.String("tc_id", tc.ID),
+						zap.String("func_name", tc.Function.Name),
+						zap.String("arguments", tc.Function.Arguments),
+						zap.Intp("index", tc.Index),
+					)
+				}
 				sc.ToolCalls = choice.Delta.ToolCalls
 			}
 			if choice.FinishReason != nil && *choice.FinishReason != "" {
@@ -235,6 +284,16 @@ func (p *Provider) getToken() (string, bool) {
 	return p.copilot.token, p.healthy
 }
 
+// apiBaseURL returns the API base URL from the token response, or the default.
+func (p *Provider) apiBaseURL() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.copilot != nil && p.copilot.apiBase != "" {
+		return p.copilot.apiBase
+	}
+	return copilotBaseURL
+}
+
 // doWithRetry performs a chat completion request with retries.
 func (p *Provider) doWithRetry(ctx context.Context, body []byte) (io.ReadCloser, error) {
 	var lastErr error
@@ -258,13 +317,12 @@ func (p *Provider) doWithRetry(ctx context.Context, body []byte) (io.ReadCloser,
 			continue
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", copilotChatURL, bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.apiBaseURL()+"/chat/completions", bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("build request: %w", err)
 		}
 
 		setCopilotHeaders(httpReq, token, p.vsCodeVer)
-		httpReq.Header.Set("X-Request-Id", uuid.New().String())
 
 		resp, err := p.client.Do(httpReq)
 		if err != nil {
@@ -363,12 +421,14 @@ func (p *Provider) refreshToken() error {
 	}
 
 	expiresAt := time.Unix(tokenResp.ExpiresAt, 0)
+	apiBase := strings.TrimRight(tokenResp.Endpoints.API, "/")
 
 	p.mu.Lock()
 	p.copilot = &copilotToken{
 		token:     tokenResp.Token,
 		expiresAt: expiresAt,
 		issuedAt:  time.Now(),
+		apiBase:   apiBase,
 	}
 	p.healthy = true
 	p.mu.Unlock()
@@ -393,6 +453,7 @@ func (p *Provider) refreshToken() error {
 				zap.String("provider", p.name),
 				zap.String("username", user.Login),
 				zap.Time("token_expires", expiresAt),
+				zap.String("api_base", apiBase),
 			)
 		}
 	} else {
@@ -402,6 +463,9 @@ func (p *Provider) refreshToken() error {
 			zap.Time("expires", expiresAt),
 		)
 	}
+
+	// Fetch available models from Copilot API (non-blocking, best-effort)
+	go p.fetchAndCacheModels()
 
 	return nil
 }
@@ -413,7 +477,7 @@ func (p *Provider) FetchModels(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("provider not healthy")
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", copilotModelsURL, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.apiBaseURL()+"/models", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -424,6 +488,11 @@ func (p *Provider) FetchModels(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("copilot models %d: %s", resp.StatusCode, string(respBytes))
+	}
 
 	var result struct {
 		Data []struct {
@@ -441,6 +510,38 @@ func (p *Provider) FetchModels(ctx context.Context) ([]string, error) {
 	return modelIDs, nil
 }
 
+// fetchAndCacheModels fetches available models and caches them.
+func (p *Provider) fetchAndCacheModels() {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	models, err := p.FetchModels(ctx)
+	if err != nil {
+		p.logger.Warn("Failed to fetch Copilot models",
+			zap.String("provider", p.name),
+			zap.Error(err),
+		)
+		return
+	}
+
+	p.mu.Lock()
+	p.models = models
+	p.mu.Unlock()
+
+	p.logger.Info("Copilot models refreshed",
+		zap.String("provider", p.name),
+		zap.Int("count", len(models)),
+		zap.Strings("models", models),
+	)
+}
+
+// GetModels returns the cached list of available Copilot models.
+func (p *Provider) GetModels() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.models
+}
+
 // CreateEmbedding implements EmbeddingProvider for Copilot.
 func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error) {
 	token, isHealthy := p.getToken()
@@ -453,7 +554,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 		return nil, fmt.Errorf("marshal embedding request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", copilotEmbedURL, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.apiBaseURL()+"/embeddings", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -485,4 +586,80 @@ func (t *copilotToken) needsRefresh() bool {
 	}
 	// Refresh if expired or will expire in next 10 minutes
 	return time.Now().Add(10 * time.Minute).After(t.expiresAt)
+}
+
+// sanitizeMessages cleans up messages that Copilot API would reject:
+// 1. Remove tool_calls with empty function.name
+// 2. Ensure tool_call arguments are valid JSON (at least "{}")
+// 3. Ensure every tool_call has a matching tool response (and vice versa)
+func sanitizeMessages(req *models.ChatCompletionRequest) {
+	// Pass 1: clean tool_calls with empty names, fix invalid arguments
+	for i := range req.Messages {
+		if len(req.Messages[i].ToolCalls) == 0 {
+			continue
+		}
+		clean := req.Messages[i].ToolCalls[:0]
+		for _, tc := range req.Messages[i].ToolCalls {
+			if tc.Function.Name != "" {
+				if tc.Function.Arguments == "" || !json.Valid([]byte(tc.Function.Arguments)) {
+					tc.Function.Arguments = "{}"
+				}
+				clean = append(clean, tc)
+			}
+		}
+		req.Messages[i].ToolCalls = clean
+	}
+
+	// Pass 2: build positionally-valid pairs.
+	// OpenAI API requires tool responses to immediately follow the assistant
+	// message with tool_calls. If a non-tool message (e.g. user) sits between
+	// the assistant tool_call and its tool response, the pair is broken.
+	pairedIDs := make(map[string]bool)
+	for i, msg := range req.Messages {
+		if len(msg.ToolCalls) == 0 {
+			continue
+		}
+		// Collect tool_call IDs from this assistant message
+		callIDs := make(map[string]bool)
+		for _, tc := range msg.ToolCalls {
+			if tc.ID != "" {
+				callIDs[tc.ID] = true
+			}
+		}
+		// Only count tool responses in the consecutive tool-role block right after
+		for j := i + 1; j < len(req.Messages); j++ {
+			if req.Messages[j].Role != "tool" {
+				break
+			}
+			if callIDs[req.Messages[j].ToolCallID] {
+				pairedIDs[req.Messages[j].ToolCallID] = true
+			}
+		}
+	}
+
+	// Pass 3: strip unmatched tool_calls from assistant messages
+	for i := range req.Messages {
+		if len(req.Messages[i].ToolCalls) == 0 {
+			continue
+		}
+		clean := req.Messages[i].ToolCalls[:0]
+		for _, tc := range req.Messages[i].ToolCalls {
+			if pairedIDs[tc.ID] {
+				clean = append(clean, tc)
+			}
+		}
+		req.Messages[i].ToolCalls = clean
+	}
+
+	// Pass 4: remove orphaned tool-role messages
+	clean := req.Messages[:0]
+	for _, msg := range req.Messages {
+		if msg.Role == "tool" {
+			if !pairedIDs[msg.ToolCallID] {
+				continue
+			}
+		}
+		clean = append(clean, msg)
+	}
+	req.Messages = clean
 }

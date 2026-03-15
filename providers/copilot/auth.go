@@ -56,6 +56,9 @@ func (s *AuthSession) Mu() *sync.Mutex {
 type copilotTokenResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expires_at"`
+	Endpoints struct {
+		API string `json:"api"`
+	} `json:"endpoints"`
 }
 
 // GithubUser represents basic GitHub user info.
@@ -308,4 +311,5 @@ func setGithubHeaders(req *http.Request, githubToken, vsCodeVersion string) {
 	req.Header.Set("Editor-Plugin-Version", "copilot-chat/"+copilotVersion)
 	req.Header.Set("User-Agent", "GitHubCopilotChat/"+copilotVersion)
 	req.Header.Set("X-GitHub-API-Version", githubAPIVersion)
+	req.Header.Set("X-Vscode-User-Agent-Library-Version", "electron-fetch")
 }

@@ -218,3 +218,12 @@ export const refreshKiroToken = (provider?: string) => {
   const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
   return request<KiroStatus>("POST", `/admin/kiro/refresh${qs}`);
 };
+
+export const importKiroLocal = (provider?: string, dbPath?: string) => {
+  const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request<{ message: string; provider: string; is_external_idp: boolean; has_refresh: boolean; profile_arn: string; expires_at?: string }>(
+    "POST",
+    `/admin/kiro/import-local${qs}`,
+    dbPath ? { db_path: dbPath } : undefined
+  );
+};

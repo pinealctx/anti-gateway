@@ -8,15 +8,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
-	copilotVersion   = "0.39.1"
-	githubAPIVersion = "2026-03-10"
+	copilotVersion    = "0.26.7"
+	githubAPIVersion  = "2026-03-10" // for api.github.com
+	copilotAPIVersion = "2025-04-01" // for api.githubcopilot.com
 
-	copilotChatURL       = "https://api.githubcopilot.com/chat/completions"
-	copilotModelsURL     = "https://api.githubcopilot.com/models"
-	copilotEmbedURL      = "https://api.githubcopilot.com/embeddings"
+	copilotBaseURL       = "https://api.githubcopilot.com"
 	vsCodeVersionURL     = "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=visual-studio-code-bin"
 	defaultVSCodeVersion = "1.104.3"
 )
@@ -56,7 +57,10 @@ func setCopilotHeaders(req *http.Request, token, vsCodeVersion string) {
 	req.Header.Set("Editor-Plugin-Version", "copilot-chat/"+copilotVersion)
 	req.Header.Set("Copilot-Integration-Id", "vscode-chat")
 	req.Header.Set("User-Agent", "GitHubCopilotChat/"+copilotVersion)
-	req.Header.Set("X-GitHub-API-Version", githubAPIVersion)
+	req.Header.Set("Openai-Intent", "conversation-panel")
+	req.Header.Set("X-GitHub-API-Version", copilotAPIVersion)
+	req.Header.Set("X-Request-Id", uuid.New().String())
+	req.Header.Set("X-Vscode-User-Agent-Library-Version", "electron-fetch")
 }
 
 // vsCodeVersionCache caches the fetched VSCode version.
@@ -114,29 +118,22 @@ func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
 }
 
-// modelAliases maps common external model names to Copilot model IDs.
-var modelAliases = map[string]string{
-	// Claude models
-	"claude-sonnet-4-20250514": "claude-sonnet-4-20250514",
-	"claude-3.5-sonnet":        "claude-3.5-sonnet",
-	"claude-3-opus":            "claude-3-opus",
-	"claude-3-haiku":           "claude-3-haiku",
-	// GPT models
-	"gpt-4o":      "gpt-4o",
-	"gpt-4o-mini": "gpt-4o-mini",
-	"gpt-4-turbo": "gpt-4-turbo",
-	"gpt-4":       "gpt-4",
-	// Gemini models
-	"gemini-2.0-flash": "gemini-2.0-flash",
-	"gemini-2.5-pro":   "gemini-2.5-pro",
-}
-
 // toCopilotModel resolves a model name to the Copilot model ID.
-// If the model is unknown, it passes through unchanged (Copilot may still support it).
+// Following copilot2api-go's approach: the only hardcoded normalization is
+// stripping date suffixes from Claude models (e.g. claude-sonnet-4-20250514 → claude-sonnet-4).
+// All other models pass through unchanged — the available models come from
+// the Copilot API dynamically.
 func toCopilotModel(model string) string {
 	model = strings.TrimSpace(model)
-	if alias, ok := modelAliases[model]; ok {
-		return alias
+	// Normalize Claude date-suffixed models: claude-{tier}-{gen}-YYYYMMDD → claude-{tier}-{gen}
+	if strings.HasPrefix(model, "claude-") {
+		parts := strings.Split(model, "-")
+		if n := len(parts); n >= 4 {
+			last := parts[n-1]
+			if len(last) == 8 && last[0] >= '2' && last[0] <= '9' {
+				return strings.Join(parts[:n-1], "-")
+			}
+		}
 	}
 	return model
 }

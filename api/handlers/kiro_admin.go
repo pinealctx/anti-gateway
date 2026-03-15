@@ -121,6 +121,7 @@ func (h *KiroAdminHandler) CompleteLogin(c *gin.Context) {
 	accessToken := session.AccessToken
 	refreshToken := session.RefreshToken
 	clientID := session.ClientID
+	clientSecret := session.ClientSecret
 	tokenEndpoint := session.TokenEndpoint
 	tokenExpiresAt := session.TokenExpiresAt
 	profileArn := session.ProfileArn
@@ -140,9 +141,10 @@ func (h *KiroAdminHandler) CompleteLogin(c *gin.Context) {
 		AccessToken:   accessToken,
 		RefreshToken:  refreshToken,
 		ClientID:      clientID,
+		ClientSecret:  clientSecret,
 		TokenEndpoint: tokenEndpoint,
 		ExpiresAt:     tokenExpiresAt,
-		IsExternalIdP: true,
+		IsExternalIdP: session.IsExternalIdP(),
 		ProfileArn:    profileArn,
 	}
 
@@ -184,4 +186,42 @@ func (h *KiroAdminHandler) RefreshToken(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, provider.TokenStatus())
+}
+
+// ImportLocal reads the local kiro-cli SQLite database and injects the token.
+// POST /admin/kiro/import-local?provider=<name>
+// Body (optional): { "db_path": "/path/to/data.sqlite3" }
+func (h *KiroAdminHandler) ImportLocal(c *gin.Context) {
+	providerName := c.Query("provider")
+	provider := h.findKiroProvider(providerName)
+	if provider == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no kiro provider configured"})
+		return
+	}
+
+	var req struct {
+		DBPath string `json:"db_path"`
+	}
+	_ = c.ShouldBindJSON(&req) // optional body
+
+	lt, err := kiroProvider.ImportLocalToken(req.DBPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	provider.SetLoginToken(lt)
+
+	resp := gin.H{
+		"message":         "kiro-cli token imported",
+		"provider":        provider.Name(),
+		"is_external_idp": lt.IsExternalIdP,
+		"has_refresh":     lt.RefreshToken != "",
+		"profile_arn":     lt.ProfileArn,
+	}
+	if !lt.ExpiresAt.IsZero() {
+		resp["expires_at"] = lt.ExpiresAt
+	}
+
+	c.JSON(http.StatusOK, resp)
 }

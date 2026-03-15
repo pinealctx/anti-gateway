@@ -307,23 +307,31 @@ func (r *Registry) IsHealthy(name string) bool {
 
 // StartHealthCheck runs periodic health checks on all providers.
 func (r *Registry) StartHealthCheck(interval time.Duration) {
+	checkAll := func() {
+		r.mu.RLock()
+		entries := make(map[string]*ProviderEntry, len(r.entries))
+		for k, v := range r.entries {
+			entries[k] = v
+		}
+		r.mu.RUnlock()
+
+		for name, entry := range entries {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			healthy := entry.Provider.IsHealthy(ctx)
+			cancel()
+			r.SetHealthy(name, healthy)
+		}
+	}
+
 	go func() {
+		// Run an initial check after a short delay to let async token refreshes complete.
+		time.Sleep(5 * time.Second)
+		checkAll()
+
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			r.mu.RLock()
-			entries := make(map[string]*ProviderEntry, len(r.entries))
-			for k, v := range r.entries {
-				entries[k] = v
-			}
-			r.mu.RUnlock()
-
-			for name, entry := range entries {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				healthy := entry.Provider.IsHealthy(ctx)
-				cancel()
-				r.SetHealthy(name, healthy)
-			}
+			checkAll()
 		}
 	}()
 }

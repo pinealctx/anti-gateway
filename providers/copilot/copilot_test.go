@@ -14,10 +14,35 @@ func TestToCopilotModel_KnownAlias(t *testing.T) {
 		input string
 		want  string
 	}{
+		// Passthrough — no aliases, all models go through as-is
 		{"gpt-4o", "gpt-4o"},
 		{"gpt-4o-mini", "gpt-4o-mini"},
-		{"claude-sonnet-4-20250514", "claude-sonnet-4-20250514"},
+		{"gpt-4", "gpt-4"},
+		{"claude-sonnet-4", "claude-sonnet-4"},
+		{"claude-opus-4", "claude-opus-4"},
+		{"claude-3.5-sonnet", "claude-3.5-sonnet"},
+		{"claude-opus-4-6", "claude-opus-4-6"},
 		{"gemini-2.0-flash", "gemini-2.0-flash"},
+		// Date suffix stripping
+		{"claude-sonnet-4-20250514", "claude-sonnet-4"},
+		{"claude-opus-4-20250514", "claude-opus-4"},
+	}
+	for _, tc := range tests {
+		got := toCopilotModel(tc.input)
+		if got != tc.want {
+			t.Errorf("toCopilotModel(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestToCopilotModel_DateSuffixStripping(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"claude-sonnet-4-20260101", "claude-sonnet-4"},
+		{"claude-opus-4-20260315", "claude-opus-4"},
+		{"claude-sonnet-4-5-20250929", "claude-sonnet-4-5"},
 	}
 	for _, tc := range tests {
 		got := toCopilotModel(tc.input)

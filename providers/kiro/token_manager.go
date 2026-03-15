@@ -1,6 +1,7 @@
 package kiro
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -29,6 +30,7 @@ type LoginToken struct {
 	AccessToken   string
 	RefreshToken  string
 	ClientID      string
+	ClientSecret  string // non-empty for providers requiring client_secret in token refresh (e.g. AWS OIDC)
 	TokenEndpoint string // e.g. https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
 	ExpiresAt     time.Time
 	IsExternalIdP bool
@@ -156,8 +158,13 @@ func (tm *TokenManager) refresh() (*TokenInfo, error) {
 	return nil, fmt.Errorf("all token refresh strategies failed")
 }
 
-// tryLoginTokenRefresh refreshes the token using credentials from the PKCE login flow.
-// Uses Microsoft OAuth2 form-urlencoded POST when TokenEndpoint is set.
+// isAWSIdCEndpoint returns true if the token endpoint belongs to AWS IAM Identity Center.
+func isAWSIdCEndpoint(endpoint string) bool {
+	return strings.Contains(endpoint, "oidc.") && strings.Contains(endpoint, ".amazonaws.com")
+}
+
+// tryLoginTokenRefresh refreshes the token using credentials from the login flow.
+// AWS IdC endpoints use JSON POST with camelCase fields; all others use form-urlencoded.
 func (tm *TokenManager) tryLoginTokenRefresh() (*TokenInfo, error) {
 	lt := tm.loginToken
 	if lt.RefreshToken == "" {
@@ -167,10 +174,82 @@ func (tm *TokenManager) tryLoginTokenRefresh() (*TokenInfo, error) {
 		return nil, fmt.Errorf("no token endpoint for login token refresh")
 	}
 
+	if isAWSIdCEndpoint(lt.TokenEndpoint) {
+		return tm.refreshAWSIdC(lt)
+	}
+	return tm.refreshOAuth2(lt)
+}
+
+// refreshAWSIdC refreshes a token via AWS SSO OIDC (JSON body, camelCase fields).
+func (tm *TokenManager) refreshAWSIdC(lt *LoginToken) (*TokenInfo, error) {
+	reqBody, _ := json.Marshal(map[string]string{
+		"clientId":     lt.ClientID,
+		"clientSecret": lt.ClientSecret,
+		"grantType":    "refresh_token",
+		"refreshToken": lt.RefreshToken,
+	})
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryBackoff[attempt-1])
+		}
+
+		req, _ := http.NewRequest("POST", lt.TokenEndpoint, bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := tm.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("AWS IdC token refresh request: %w", err)
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("AWS IdC token refresh status: %d", resp.StatusCode)
+			continue
+		}
+
+		if resp.StatusCode != 200 {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("AWS IdC token refresh status: %d", resp.StatusCode)
+		}
+
+		var result struct {
+			AccessToken  string `json:"accessToken"`
+			RefreshToken string `json:"refreshToken"`
+			ExpiresIn    int    `json:"expiresIn"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("decode AWS IdC token refresh: %w", err)
+		}
+		_ = resp.Body.Close()
+
+		if result.RefreshToken != "" {
+			lt.RefreshToken = result.RefreshToken
+		}
+		lt.AccessToken = result.AccessToken
+		lt.ExpiresAt = time.Now().Add(time.Duration(result.ExpiresIn) * time.Second)
+
+		return &TokenInfo{
+			AccessToken:   result.AccessToken,
+			ExpiresAt:     lt.ExpiresAt,
+			IsExternalIdP: lt.IsExternalIdP,
+		}, nil
+	}
+	return nil, fmt.Errorf("AWS IdC token refresh failed after %d retries: %w", maxRetries, lastErr)
+}
+
+// refreshOAuth2 refreshes a token via standard OAuth2 form-urlencoded POST (e.g. Azure AD).
+func (tm *TokenManager) refreshOAuth2(lt *LoginToken) (*TokenInfo, error) {
 	form := url.Values{}
 	form.Set("client_id", lt.ClientID)
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", lt.RefreshToken)
+	if lt.ClientSecret != "" {
+		form.Set("client_secret", lt.ClientSecret)
+	}
 	if lt.RefreshScope != "" {
 		form.Set("scope", lt.RefreshScope)
 	}
@@ -209,11 +288,9 @@ func (tm *TokenManager) tryLoginTokenRefresh() (*TokenInfo, error) {
 		}
 		_ = resp.Body.Close()
 
-		// Update stored refresh token if a new one was issued
 		if result.RefreshToken != "" {
 			lt.RefreshToken = result.RefreshToken
 		}
-
 		lt.AccessToken = result.AccessToken
 		lt.ExpiresAt = time.Now().Add(time.Duration(result.ExpiresIn) * time.Second)
 
@@ -223,7 +300,6 @@ func (tm *TokenManager) tryLoginTokenRefresh() (*TokenInfo, error) {
 			IsExternalIdP: lt.IsExternalIdP,
 		}, nil
 	}
-
 	return nil, fmt.Errorf("login token refresh failed after %d retries: %w", maxRetries, lastErr)
 }
 

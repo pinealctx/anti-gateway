@@ -1,6 +1,7 @@
 package kiro
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -25,6 +26,9 @@ const (
 	externalIdPRedirectURI = "kiro://kiro.oauth/callback"
 	defaultCallbackPort    = 3128
 	loginTimeout           = 5 * time.Minute
+
+	// builderIDScopes are the OAuth2 scopes for AWS Builder ID / IAM Identity Center.
+	builderIDScopes = "codewhisperer:completions codewhisperer:analysis codewhisperer:conversations codewhisperer:transformations codewhisperer:taskassist"
 )
 
 // KiroLoginSession tracks a pending PKCE authorization code login flow.
@@ -40,17 +44,31 @@ type KiroLoginSession struct {
 	codeVerifier string
 
 	// External IdP (Enterprise SSO) — populated after first callback from Kiro
-	externalIdP       bool   // true if login_option=external_idp was received
-	externalIssuerURL string // e.g. https://login.microsoftonline.com/{tenant}/v2.0
-	externalClientID  string // e.g. e0d7fe97-...
-	externalScopes    string // e.g. api://e0d7fe97-.../codewhisperer:conversations ...
-	externalState     string // state for the Azure AD leg
-	externalVerifier  string // PKCE code_verifier for the Azure AD leg
+	externalIdP           bool   // true if login_option=external_idp was received
+	externalIssuerURL     string // e.g. https://login.microsoftonline.com/{tenant}/v2.0
+	externalClientID      string // e.g. e0d7fe97-...
+	externalScopes        string // e.g. api://e0d7fe97-.../codewhisperer:conversations ...
+	externalState         string // state for the external IdP leg
+	externalVerifier      string // PKCE code_verifier for the external IdP leg
+	externalAuthEndpoint  string // OIDC authorization_endpoint (discovered or derived)
+	externalTokenEndpoint string // OIDC token_endpoint (discovered or derived)
+
+	// Builder ID (AWS IAM Identity Center Device Authorization Flow)
+	builderID              bool   // true if login_option=builderid was received
+	builderIDOIDCBase      string // e.g. https://oidc.us-east-1.amazonaws.com
+	builderIDClientID      string // dynamically registered AWS OIDC client_id
+	builderIDClientSecret  string // dynamically registered AWS OIDC client_secret
+	builderIDDeviceCode    string // device_code for polling
+	builderIDUserCode      string // user_code to display
+	builderIDVerifyURI     string // verificationUriComplete for browser
+	builderIDInterval      int    // polling interval in seconds
+	builderIDTokenEndpoint string // token endpoint for code exchange
 
 	// Populated on completion
 	AccessToken    string    `json:"-"`
 	RefreshToken   string    `json:"-"`
 	ClientID       string    `json:"-"`
+	ClientSecret   string    `json:"-"` // non-empty for providers requiring client_secret (e.g. AWS OIDC)
 	TokenEndpoint  string    `json:"-"`
 	TokenExpiresAt time.Time `json:"-"`
 	ProfileArn     string    `json:"-"`
@@ -64,6 +82,14 @@ type KiroLoginSession struct {
 // Mu returns the session's mutex for external synchronization.
 func (s *KiroLoginSession) Mu() *sync.Mutex {
 	return &s.mu
+}
+
+// IsExternalIdP reports whether this session used an external IdP or Builder ID login.
+// Both require TokenType: EXTERNAL_IDP when calling CodeWhisperer.
+func (s *KiroLoginSession) IsExternalIdP() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.externalIdP || s.builderID
 }
 
 // KiroAuthManager manages Kiro PKCE login flows.
@@ -160,6 +186,15 @@ func (am *KiroAuthManager) startCallbackServer(session *KiroLoginSession) error 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		am.handleCallback(session, w, r)
 	})
+	// Session status endpoint — used by the device code page to detect completion.
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		session.mu.Lock()
+		st := session.Status
+		errStr := session.Error
+		session.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": st, "error": errStr})
+	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", session.CallbackPort)
 	ln, err := net.Listen("tcp", addr)
@@ -200,6 +235,7 @@ type callbackTokenResult struct {
 	AccessToken   string `json:"access_token"`
 	RefreshToken  string `json:"refresh_token"`
 	ClientID      string `json:"client_id"`
+	ClientSecret  string `json:"client_secret,omitempty"` // for providers requiring client_secret (e.g. AWS OIDC)
 	TokenEndpoint string `json:"token_endpoint"`
 	ExpiresAt     string `json:"expires_at"`
 	ExpiresIn     int    `json:"expires_in"`
@@ -225,6 +261,9 @@ func (am *KiroAuthManager) handleCallback(session *KiroLoginSession, w http.Resp
 		if desc := r.URL.Query().Get("error_description"); desc != "" {
 			errMsg = errMsg + ": " + desc
 		}
+		am.logger.Error("OAuth callback returned error",
+			zap.String("error", errMsg),
+			zap.String("full_url", r.URL.String()))
 		am.failSession(session, errMsg)
 		writeCallbackHTML(w, false, errMsg)
 		return
@@ -236,7 +275,14 @@ func (am *KiroAuthManager) handleCallback(session *KiroLoginSession, w http.Resp
 		return
 	}
 
-	// External IdP second callback: Azure AD returns with authorization code
+	// Builder ID / AWS IdC (organization) flow: same Device Authorization Flow,
+	// only differing in the issuerUrl/startUrl value.
+	if lo := r.URL.Query().Get("login_option"); lo == "builderid" || lo == "awsidc" {
+		am.handleBuilderIDRedirect(session, w, r)
+		return
+	}
+
+	// External IdP second callback: user pasted back the kiro:// authorization code
 	session.mu.Lock()
 	isExternalIdP := session.externalIdP
 	session.mu.Unlock()
@@ -332,6 +378,21 @@ func (am *KiroAuthManager) handleExternalIdPRedirect(session *KiroLoginSession, 
 	challenge := computeCodeChallenge(verifier)
 	state := uuid.New().String()
 
+	// Discover OIDC endpoints; fall back to Azure AD URL pattern for Microsoft issuers.
+	authEndpoint, tokenEndpoint, discErr := oidcDiscover(issuerURL)
+	if discErr != nil {
+		am.logger.Warn("OIDC discovery failed, falling back to Azure AD URL pattern",
+			zap.String("issuer_url", issuerURL),
+			zap.Error(discErr))
+		base := strings.TrimSuffix(issuerURL, "/v2.0")
+		authEndpoint = base + "/oauth2/v2.0/authorize"
+		tokenEndpoint = base + "/oauth2/v2.0/token"
+	} else {
+		am.logger.Info("OIDC discovery succeeded",
+			zap.String("auth_endpoint", authEndpoint),
+			zap.String("token_endpoint", tokenEndpoint))
+	}
+
 	// Save external IdP state in session
 	session.mu.Lock()
 	session.externalIdP = true
@@ -340,10 +401,9 @@ func (am *KiroAuthManager) handleExternalIdPRedirect(session *KiroLoginSession, 
 	session.externalScopes = scopes
 	session.externalState = state
 	session.externalVerifier = verifier
+	session.externalAuthEndpoint = authEndpoint
+	session.externalTokenEndpoint = tokenEndpoint
 	session.mu.Unlock()
-
-	// Build the Azure AD authorization URL
-	authBase := strings.TrimSuffix(issuerURL, "/v2.0") + "/oauth2/v2.0/authorize"
 
 	params := url.Values{}
 	params.Set("client_id", clientID)
@@ -359,7 +419,7 @@ func (am *KiroAuthManager) handleExternalIdPRedirect(session *KiroLoginSession, 
 		params.Set("login_hint", hint)
 	}
 
-	authURL := authBase + "?" + params.Encode()
+	authURL := authEndpoint + "?" + params.Encode()
 	writeExternalIdPPage(w, authURL)
 }
 
@@ -385,15 +445,13 @@ func (am *KiroAuthManager) handleExternalIdPCallback(session *KiroLoginSession, 
 
 	am.logger.Info("exchanging external IdP authorization code for tokens")
 
-	// Exchange code at Azure AD token endpoint
+	// Exchange code at the discovered token endpoint
 	session.mu.Lock()
-	issuerURL := session.externalIssuerURL
 	clientID := session.externalClientID
 	verifier := session.externalVerifier
 	scopes := session.externalScopes
+	tokenEndpoint := session.externalTokenEndpoint
 	session.mu.Unlock()
-
-	tokenEndpoint := strings.TrimSuffix(issuerURL, "/v2.0") + "/oauth2/v2.0/token"
 
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
@@ -463,6 +521,7 @@ func (am *KiroAuthManager) completeSession(session *KiroLoginSession, tokenResul
 	session.AccessToken = tokenResult.AccessToken
 	session.RefreshToken = tokenResult.RefreshToken
 	session.ClientID = tokenResult.ClientID
+	session.ClientSecret = tokenResult.ClientSecret
 	session.TokenEndpoint = tokenResult.TokenEndpoint
 	session.ProfileArn = tokenResult.ProfileArn
 	if tokenResult.ExpiresAt != "" {
@@ -484,8 +543,10 @@ func (am *KiroAuthManager) completeSession(session *KiroLoginSession, tokenResul
 		zap.String("session_id", session.ID),
 		zap.Bool("has_refresh", tokenResult.RefreshToken != ""),
 		zap.Bool("has_client_id", tokenResult.ClientID != ""),
+		zap.Bool("has_client_secret", tokenResult.ClientSecret != ""),
 		zap.Bool("has_token_endpoint", tokenResult.TokenEndpoint != ""),
-		zap.Bool("external_idp", session.externalIdP))
+		zap.Bool("external_idp", session.externalIdP),
+		zap.Bool("builder_id", session.builderID))
 
 	close(session.done)
 	go func() { _ = session.server.Close() }()
@@ -534,7 +595,331 @@ func (am *KiroAuthManager) failSession(session *KiroLoginSession, errMsg string)
 	go func() { _ = session.server.Close() }()
 }
 
-// writeExternalIdPPage serves an HTML page that opens Azure AD login in a new tab
+// handleBuilderIDRedirect processes the first callback from Kiro with login_option=builderid.
+// It uses the AWS SSO OIDC Device Authorization Flow:
+//  1. Register a client → get clientId + clientSecret
+//  2. Start device_authorization → get deviceCode + userCode + verificationUriComplete
+//  3. Show the user a page with the verification URL to open
+//  4. Poll create_token in the background until the user authorizes
+func (am *KiroAuthManager) handleBuilderIDRedirect(session *KiroLoginSession, w http.ResponseWriter, r *http.Request) {
+	idcRegion := r.URL.Query().Get("idc_region")
+	if idcRegion == "" {
+		idcRegion = "us-east-1"
+	}
+	startURL := r.URL.Query().Get("issuer_url")
+	if startURL == "" {
+		startURL = "https://view.awsapps.com/start"
+	}
+	// Clean up the start URL: strip hash fragment and trailing slashes.
+	// e.g. "https://d-xxx.awsapps.com/start/#/?tab=accounts" → "https://d-xxx.awsapps.com/start"
+	if idx := strings.Index(startURL, "#"); idx >= 0 {
+		startURL = startURL[:idx]
+	}
+	startURL = strings.TrimRight(startURL, "/")
+	oidcBase := "https://oidc." + idcRegion + ".amazonaws.com"
+	tokenEndpoint := oidcBase + "/token"
+
+	am.logger.Info("Builder ID login detected (device flow)",
+		zap.String("idc_region", idcRegion),
+		zap.String("oidc_base", oidcBase),
+		zap.String("start_url", startURL))
+
+	// Step 1: Register client
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	regBody, _ := json.Marshal(map[string]interface{}{
+		"clientName": "Kiro IDE",
+		"clientType": "public",
+		"scopes":     strings.Fields(builderIDScopes),
+		"grantTypes": []string{"urn:ietf:params:oauth:grant-type:device_code", "refresh_token"},
+		"issuerUrl":  startURL,
+	})
+	regResp, err := httpClient.Post(oidcBase+"/client/register", "application/json", bytes.NewReader(regBody))
+	if err != nil {
+		am.failSession(session, "AWS OIDC register: "+err.Error())
+		writeCallbackHTML(w, false, "Client registration failed")
+		return
+	}
+	regRespBody, _ := io.ReadAll(io.LimitReader(regResp.Body, 32*1024))
+	_ = regResp.Body.Close()
+	if regResp.StatusCode != http.StatusOK {
+		am.logger.Error("AWS OIDC client registration failed",
+			zap.Int("status", regResp.StatusCode),
+			zap.String("body", string(regRespBody)))
+		am.failSession(session, "AWS OIDC register failed")
+		writeCallbackHTML(w, false, "Client registration failed")
+		return
+	}
+	var regResult struct {
+		ClientID     string `json:"clientId"`
+		ClientSecret string `json:"clientSecret"`
+	}
+	_ = json.Unmarshal(regRespBody, &regResult)
+	if regResult.ClientID == "" {
+		am.failSession(session, "empty clientId from registration")
+		writeCallbackHTML(w, false, "Registration returned empty clientId")
+		return
+	}
+	am.logger.Info("AWS OIDC client registered", zap.String("client_id", regResult.ClientID))
+
+	// Step 2: Start device authorization
+	authBody, _ := json.Marshal(map[string]string{
+		"clientId":     regResult.ClientID,
+		"clientSecret": regResult.ClientSecret,
+		"startUrl":     startURL,
+	})
+	authResp, err := httpClient.Post(oidcBase+"/device_authorization", "application/json", bytes.NewReader(authBody))
+	if err != nil {
+		am.failSession(session, "device_authorization: "+err.Error())
+		writeCallbackHTML(w, false, "Device authorization failed")
+		return
+	}
+	authRespBody, _ := io.ReadAll(io.LimitReader(authResp.Body, 32*1024))
+	_ = authResp.Body.Close()
+	if authResp.StatusCode != http.StatusOK {
+		am.logger.Error("device_authorization failed",
+			zap.Int("status", authResp.StatusCode),
+			zap.String("body", string(authRespBody)))
+		am.failSession(session, "device_authorization failed")
+		writeCallbackHTML(w, false, "Device authorization failed")
+		return
+	}
+	var daResult struct {
+		DeviceCode              string `json:"deviceCode"`
+		UserCode                string `json:"userCode"`
+		VerificationURI         string `json:"verificationUri"`
+		VerificationURIComplete string `json:"verificationUriComplete"`
+		ExpiresIn               int    `json:"expiresIn"`
+		Interval                int    `json:"interval"`
+	}
+	_ = json.Unmarshal(authRespBody, &daResult)
+	if daResult.DeviceCode == "" || daResult.UserCode == "" {
+		am.failSession(session, "device_authorization missing deviceCode/userCode")
+		writeCallbackHTML(w, false, "Device authorization incomplete")
+		return
+	}
+	if daResult.Interval < 1 {
+		daResult.Interval = 5
+	}
+
+	am.logger.Info("Builder ID device authorization started",
+		zap.String("user_code", daResult.UserCode),
+		zap.String("verify_url", daResult.VerificationURIComplete),
+		zap.Int("interval", daResult.Interval))
+
+	// Save state in session
+	session.mu.Lock()
+	session.builderID = true
+	session.builderIDOIDCBase = oidcBase
+	session.builderIDClientID = regResult.ClientID
+	session.builderIDClientSecret = regResult.ClientSecret
+	session.builderIDDeviceCode = daResult.DeviceCode
+	session.builderIDUserCode = daResult.UserCode
+	session.builderIDVerifyURI = daResult.VerificationURIComplete
+	session.builderIDInterval = daResult.Interval
+	session.builderIDTokenEndpoint = tokenEndpoint
+	session.mu.Unlock()
+
+	// Step 3: Start background polling for device code completion
+	go am.pollBuilderIDDeviceCode(session)
+
+	// Step 4: Show the user a page with the code and verification URL
+	writeBuilderIDDevicePage(w, daResult.UserCode, daResult.VerificationURIComplete)
+}
+
+// pollBuilderIDDeviceCode polls the AWS SSO OIDC create_token endpoint
+// until the user authorizes the device code or the session expires/fails.
+func (am *KiroAuthManager) pollBuilderIDDeviceCode(session *KiroLoginSession) {
+	session.mu.Lock()
+	oidcBase := session.builderIDOIDCBase
+	clientID := session.builderIDClientID
+	clientSecret := session.builderIDClientSecret
+	deviceCode := session.builderIDDeviceCode
+	interval := session.builderIDInterval
+	tokenEndpoint := session.builderIDTokenEndpoint
+	session.mu.Unlock()
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-session.done:
+			return
+		case <-ticker.C:
+		}
+
+		reqBody, _ := json.Marshal(map[string]string{
+			"clientId":     clientID,
+			"clientSecret": clientSecret,
+			"deviceCode":   deviceCode,
+			"grantType":    "urn:ietf:params:oauth:grant-type:device_code",
+		})
+		resp, err := httpClient.Post(oidcBase+"/token", "application/json", bytes.NewReader(reqBody))
+		if err != nil {
+			am.logger.Warn("Builder ID poll error", zap.Error(err))
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
+		_ = resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			// Success!
+			var tokenData struct {
+				AccessToken  string `json:"accessToken"`
+				RefreshToken string `json:"refreshToken"`
+				ExpiresIn    int    `json:"expiresIn"`
+			}
+			if err := json.Unmarshal(body, &tokenData); err != nil {
+				am.failSession(session, "parse Builder ID token: "+err.Error())
+				return
+			}
+			am.logger.Info("Builder ID device flow completed",
+				zap.Bool("has_refresh", tokenData.RefreshToken != ""),
+				zap.Int("expires_in", tokenData.ExpiresIn))
+
+			tokenResult := &callbackTokenResult{
+				AccessToken:   tokenData.AccessToken,
+				RefreshToken:  tokenData.RefreshToken,
+				ClientID:      clientID,
+				ClientSecret:  clientSecret,
+				TokenEndpoint: tokenEndpoint,
+				ExpiresIn:     tokenData.ExpiresIn,
+			}
+			am.completeSession(session, tokenResult)
+			return
+		}
+
+		// Check error type
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(body, &errResp)
+
+		switch errResp.Error {
+		case "authorization_pending":
+			// User hasn't authorized yet, keep polling
+			continue
+		case "slow_down":
+			// Increase interval
+			ticker.Reset(time.Duration(interval+5) * time.Second)
+			continue
+		case "expired_token":
+			am.failSession(session, "device code expired")
+			return
+		default:
+			am.logger.Error("Builder ID poll failed",
+				zap.Int("status", resp.StatusCode),
+				zap.String("body", string(body)))
+			am.failSession(session, "Builder ID poll: "+errResp.Error)
+			return
+		}
+	}
+}
+
+// writeBuilderIDDevicePage serves an HTML page showing the Builder ID device code
+// and a link to the verification URL.
+func writeBuilderIDDevicePage(w http.ResponseWriter, userCode, verifyURL string) {
+	const tpl = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Builder ID Login</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0a;color:#e5e5e5;min-height:100vh;display:flex;justify-content:center;align-items:center}
+.card{background:#1a1a1a;border-radius:12px;padding:32px;max-width:480px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.5);text-align:center}
+h2{font-size:20px;margin-bottom:20px;color:#fff}
+.code{font-size:36px;font-weight:700;letter-spacing:4px;color:#60a5fa;background:#111;padding:16px 24px;border-radius:8px;margin:20px 0;font-family:'Courier New',monospace}
+.step{margin:14px 0;padding:14px;background:#111;border-radius:8px;border-left:3px solid #3b82f6;font-size:14px;line-height:1.6;text-align:left}
+.step-num{font-weight:700;color:#3b82f6;margin-right:4px}
+.btn-open{background:#3b82f6;color:#fff;display:inline-block;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:500;font-size:14px}
+.btn-open:hover{background:#60a5fa}
+.hint{color:#888;font-size:13px;margin-top:16px}
+.spinner{margin-top:16px;color:#888;font-size:14px}
+</style>
+</head>
+<body>
+<div class="card">
+<h2>&#128274; AWS Builder ID Login</h2>
+<div class="step">
+<span class="step-num">Step 1:</span> 点击下方按钮打开 AWS Builder ID 授权页面。
+<br><br>
+<a class="btn-open" href="{{.VerifyURL}}" target="_blank" rel="noopener noreferrer">打开 AWS Builder ID &#8594;</a>
+</div>
+<div class="step">
+<span class="step-num">Step 2:</span> 在页面中输入以下验证码：
+<div class="code">{{.UserCode}}</div>
+</div>
+<div class="step">
+<span class="step-num">Step 3:</span> 完成 AWS 授权后，此页面会自动关闭。
+</div>
+<div class="spinner" id="spinner">&#9203; 等待授权中...</div>
+<div class="hint" id="hint">授权完成后请检查管理面板确认登录状态</div>
+</div>
+<script>
+(function(){
+  var spinner = document.getElementById('spinner');
+  var hint = document.getElementById('hint');
+  function poll(){
+    fetch('/status').then(function(r){return r.json()}).then(function(d){
+      if(d.status==='completed'){
+        spinner.innerHTML='&#9989; 授权完成！';
+        spinner.style.color='#22c55e';
+        hint.textContent='页面将在 3 秒后自动关闭...';
+        setTimeout(function(){window.close();},3000);
+      } else if(d.status==='error'||d.status==='expired'){
+        spinner.innerHTML='&#10060; '+(d.error||'登录失败');
+        spinner.style.color='#ef4444';
+        hint.textContent='请关闭此页面后重试';
+      } else {
+        setTimeout(poll,3000);
+      }
+    }).catch(function(){setTimeout(poll,5000);});
+  }
+  setTimeout(poll,3000);
+})();
+</script>
+</body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := struct {
+		UserCode  string
+		VerifyURL string
+	}{UserCode: userCode, VerifyURL: verifyURL}
+	t := template.Must(template.New("builderid").Parse(tpl))
+	_ = t.Execute(w, data)
+}
+
+// oidcDiscover fetches the OIDC discovery document from {issuer}/.well-known/openid-configuration
+// and returns the authorization_endpoint and token_endpoint.
+// This supports any standards-compliant IdP (Azure AD, Okta, Google, Ping Identity, AWS OIDC, etc.).
+func oidcDiscover(issuerURL string) (authEndpoint, tokenEndpoint string, err error) {
+	discoveryURL := strings.TrimRight(issuerURL, "/") + "/.well-known/openid-configuration"
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(discoveryURL)
+	if err != nil {
+		return "", "", fmt.Errorf("OIDC discovery request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("OIDC discovery status: %d", resp.StatusCode)
+	}
+	var doc struct {
+		AuthorizationEndpoint string `json:"authorization_endpoint"`
+		TokenEndpoint         string `json:"token_endpoint"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&doc); err != nil {
+		return "", "", fmt.Errorf("OIDC discovery parse: %w", err)
+	}
+	if doc.AuthorizationEndpoint == "" || doc.TokenEndpoint == "" {
+		return "", "", fmt.Errorf("OIDC discovery missing endpoints")
+	}
+	return doc.AuthorizationEndpoint, doc.TokenEndpoint, nil
+}
+
+// writeExternalIdPPage serves an HTML page that opens the external IdP login in a new tab
 // and provides an input field for the user to paste the kiro:// callback URL.
 func writeExternalIdPPage(w http.ResponseWriter, authURL string) {
 	const tpl = `<!DOCTYPE html>

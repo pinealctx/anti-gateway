@@ -133,6 +133,7 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 		admin.POST("/kiro/login/complete/:id", kiroH.CompleteLogin)
 		admin.GET("/kiro/status", kiroH.GetStatus)
 		admin.POST("/kiro/refresh", kiroH.RefreshToken)
+		admin.POST("/kiro/import-local", kiroH.ImportLocal)
 	}
 
 	return r
