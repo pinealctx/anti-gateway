@@ -112,6 +112,17 @@ curl -X POST http://localhost:8080/v1/messages \
 - `anthropic/claude-3-opus` → Anthropic 提供方
 - `kiro/claude-sonnet-4-20250514` → Kiro 提供方
 
+### 模型处理策略
+
+- 请求侧采用**最小规范化 + 透传**：
+  - `model` 为空时回落到提供方默认模型。
+  - 必要时会去掉 `claude-*-YYYYMMDD` 的日期后缀。
+  - 其他模型名原样透传（不再维护大规模别名映射表）。
+- `/v1/models` 返回面向外部维护的 Kiro/Copilot 支持目录：
+  - 包含静态维护的模型列表。
+  - 合并已配置 Copilot 提供方动态拉取到的模型。
+  - 同时返回原始模型 ID 与带提供方前缀的 ID（如 `kiro/...`、`copilot/...`），便于路由。
+
 ### 其他端点
 
 | 端点 | 方法 | 说明 |

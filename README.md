@@ -118,6 +118,17 @@ Use model prefixes to route to specific providers:
 - `anthropic/claude-3-opus` → Anthropic provider
 - `kiro/claude-sonnet-4-20250514` → Kiro provider
 
+### Model Handling Policy
+
+- Requests use **minimal normalization + passthrough**:
+  - Empty model falls back to provider default model.
+  - `claude-*-YYYYMMDD` date suffix is stripped when needed.
+  - Other model names are forwarded as-is (no large alias remapping table).
+- `/v1/models` returns an **outward-facing supported catalog** for Kiro/Copilot:
+  - Includes maintained static model IDs.
+  - Merges dynamic model IDs discovered from configured Copilot providers.
+  - Includes both raw IDs and provider-prefixed IDs (such as `kiro/...`, `copilot/...`) for routing convenience.
+
 ### Other Endpoints
 
 | Endpoint | Method | Description |

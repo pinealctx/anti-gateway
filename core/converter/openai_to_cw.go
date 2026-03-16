@@ -10,63 +10,69 @@ import (
 	"github.com/pinealctx/anti-gateway/models"
 )
 
-// ModelMap maps various model aliases to CW model IDs.
-// Used both for protocol conversion and for /v1/models listing.
-var ModelMap = map[string]string{
-	// Opus 4.6 (1M context)
-	"claude-opus-4.6":    "claude-opus-4.6",
-	"claude-opus-4.6-1m": "claude-opus-4.6",
-	"claude-opus-4-6":    "claude-opus-4.6",
-	// Sonnet 4.6 (1M context)
-	"claude-sonnet-4.6":    "claude-sonnet-4.6",
-	"claude-sonnet-4.6-1m": "claude-sonnet-4.6",
-	"claude-sonnet-4-6":    "claude-sonnet-4.6",
-	// Opus 4.5 (200K context)
-	"claude-opus-4.5":          "claude-opus-4.5",
-	"claude-opus-4-5":          "claude-opus-4.5",
-	"claude-opus-4-5-20251101": "claude-opus-4.5",
-	// Sonnet 4.5 (200K context)
-	"claude-sonnet-4.5":          "claude-sonnet-4.5",
-	"claude-sonnet-4.5-1m":       "claude-sonnet-4.5",
-	"claude-sonnet-4-5":          "claude-sonnet-4.5",
-	"claude-sonnet-4-5-20250929": "claude-sonnet-4.5",
-	// Sonnet 4
-	"claude-sonnet-4":          "claude-opus-4.6",
-	"claude-sonnet-4-20250514": "claude-opus-4.6",
-	// Haiku 4.5
-	"claude-haiku-4.5":          "claude-opus-4.6",
-	"claude-haiku-4-5":          "claude-opus-4.6",
-	"claude-haiku-4-5-20251001": "claude-opus-4.6",
-	"claude-3-5-haiku-20241022": "claude-opus-4.6",
-	// Sonnet 3.7
-	"claude-3.7-sonnet":          "claude-opus-4.6",
-	"claude-3-7-sonnet-20250219": "claude-opus-4.6",
-	// Auto
-	"auto": "claude-opus-4.6",
-	// Third-party models in Kiro (all mapped to Opus 4.6)
-	"deepseek-3.2":     "claude-opus-4.6",
-	"kimi-k2.5":        "claude-opus-4.6",
-	"minimax-m2.1":     "claude-opus-4.6",
-	"glm-4.7":          "claude-opus-4.6",
-	"glm-4.7-flash":    "claude-opus-4.6",
-	"qwen3-coder-next": "claude-opus-4.6",
-	"agi-nova-beta-1m": "claude-opus-4.6",
-	// OpenAI-style aliases (all mapped to Opus 4.6)
-	"gpt-4o":        "claude-opus-4.6",
-	"gpt-4o-mini":   "claude-opus-4.6",
-	"gpt-4-turbo":   "claude-opus-4.6",
-	"gpt-4":         "claude-opus-4.6",
-	"gpt-3.5-turbo": "claude-opus-4.6",
+// KiroSupportedModels is the externally maintained model list for Kiro.
+// It is used for /v1/models listing only. Request conversion does not hard-map
+// one model to another (except minimal normalization in ResolveModel).
+var KiroSupportedModels = []string{
+	"claude-opus-4.6",
+	"claude-opus-4.6-1m",
+	"claude-opus-4-6",
+	"claude-sonnet-4.6",
+	"claude-sonnet-4.6-1m",
+	"claude-sonnet-4-6",
+	"claude-opus-4.5",
+	"claude-opus-4-5",
+	"claude-opus-4-5-20251101",
+	"claude-sonnet-4.5",
+	"claude-sonnet-4.5-1m",
+	"claude-sonnet-4-5",
+	"claude-sonnet-4-5-20250929",
+	"claude-sonnet-4",
+	"claude-sonnet-4-20250514",
+	"claude-haiku-4.5",
+	"claude-haiku-4-5",
+	"claude-haiku-4-5-20251001",
+	"claude-3-5-haiku-20241022",
+	"claude-3.7-sonnet",
+	"claude-3-7-sonnet-20250219",
+	"auto",
+	"deepseek-3.2",
+	"kimi-k2.5",
+	"minimax-m2.1",
+	"glm-4.7",
+	"glm-4.7-flash",
+	"qwen3-coder-next",
+	"agi-nova-beta-1m",
+	"gpt-4o",
+	"gpt-4o-mini",
+	"gpt-4-turbo",
+	"gpt-4",
+	"gpt-3.5-turbo",
 }
 
 const DefaultModel = "claude-opus-4.6"
 
-// ResolveModel maps a user-provided model name to a CW model ID.
+// ResolveModel applies minimal normalization only.
+// Behavior:
+//  1. trim spaces
+//  2. normalize Claude date suffix (claude-*-YYYYMMDD -> claude-*)
+//  3. pass-through for all other values
+//  4. empty model falls back to DefaultModel
 func ResolveModel(model string) string {
-	if mapped, ok := ModelMap[model]; ok {
-		return mapped
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return DefaultModel
 	}
-	return DefaultModel
+	if strings.HasPrefix(model, "claude-") {
+		parts := strings.Split(model, "-")
+		if n := len(parts); n >= 4 {
+			last := parts[n-1]
+			if len(last) == 8 && last[0] >= '2' && last[0] <= '9' {
+				return strings.Join(parts[:n-1], "-")
+			}
+		}
+	}
+	return model
 }
 
 // OpenAIToCW converts an OpenAI chat completion request to CodeWhisperer format.

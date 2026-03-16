@@ -22,6 +22,20 @@ const (
 	defaultVSCodeVersion = "1.104.3"
 )
 
+// DefaultSupportedModels is the externally maintained Copilot model list.
+// Runtime-fetched models from /models are merged on top when available.
+var DefaultSupportedModels = []string{
+	"gpt-4o",
+	"gpt-4o-mini",
+	"gpt-4",
+	"gpt-4-turbo",
+	"gpt-3.5-turbo",
+	"claude-sonnet-4",
+	"claude-sonnet-4-20250514",
+	"claude-opus-4",
+	"gemini-2.0-flash",
+}
+
 // CopilotToken holds a Copilot JWT token with expiry info.
 type CopilotToken struct {
 	Token     string

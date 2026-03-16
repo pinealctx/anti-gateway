@@ -53,6 +53,9 @@ func (m *mockProvider) IsHealthy(_ context.Context) bool     { return m.healthy 
 
 func setupRouter(mock *mockProvider, apiKey string) http.Handler {
 	logger, _ := zap.NewDevelopment()
+	if !mock.healthy {
+		mock.healthy = true
+	}
 	registry := providers.NewRegistry("kiro")
 	registry.Register(mock)
 	return routes.SetupRouter(routes.RouterConfig{

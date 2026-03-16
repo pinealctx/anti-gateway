@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -540,6 +541,28 @@ func (p *Provider) GetModels() []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.models
+}
+
+// SupportedModels returns externally maintained model IDs merged with
+// runtime-fetched Copilot /models results (if available).
+func (p *Provider) SupportedModels() []string {
+	set := make(map[string]struct{}, len(DefaultSupportedModels)+len(p.models))
+	for _, m := range DefaultSupportedModels {
+		if m != "" {
+			set[m] = struct{}{}
+		}
+	}
+	for _, m := range p.GetModels() {
+		if m != "" {
+			set[m] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for m := range set {
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // CreateEmbedding implements EmbeddingProvider for Copilot.

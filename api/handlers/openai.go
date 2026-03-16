@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,7 @@ import (
 	"github.com/pinealctx/anti-gateway/core/streaming"
 	"github.com/pinealctx/anti-gateway/middleware"
 	"github.com/pinealctx/anti-gateway/models"
+	copilotProvider "github.com/pinealctx/anti-gateway/providers/copilot"
 	"go.uber.org/zap"
 )
 
@@ -142,15 +144,58 @@ func (h *OpenAIHandler) handleStream(c *gin.Context, provider providers.AIProvid
 
 // Models handles /v1/models — returns available models.
 func (h *OpenAIHandler) Models(c *gin.Context) {
-	modelList := []gin.H{}
-	for id := range converter.ModelMap {
+	now := time.Now().Unix()
+	owners := make(map[string]string)
+
+	addModel := func(id, owner string) {
+		if id == "" {
+			return
+		}
+		if old, ok := owners[id]; ok && old != owner {
+			owners[id] = "multi"
+			return
+		}
+		owners[id] = owner
+	}
+
+	// Kiro externally maintained model list
+	for _, id := range converter.KiroSupportedModels {
+		addModel(id, "kiro")
+		addModel("kiro/"+id, "kiro")
+	}
+
+	// Copilot externally maintained list
+	for _, id := range copilotProvider.DefaultSupportedModels {
+		addModel(id, "copilot")
+		addModel("copilot/"+id, "copilot")
+	}
+
+	// Merge runtime-fetched models from configured Copilot providers (best-effort)
+	for name, p := range h.registry.All() {
+		if cp, ok := p.(*copilotProvider.Provider); ok {
+			for _, id := range cp.SupportedModels() {
+				addModel(id, "copilot")
+				addModel(name+"/"+id, "copilot")
+			}
+		}
+	}
+
+	ids := make([]string, 0, len(owners))
+	for id := range owners {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	modelList := make([]gin.H, 0, len(ids))
+	for _, id := range ids {
 		modelList = append(modelList, gin.H{
 			"id":       id,
 			"object":   "model",
-			"created":  time.Now().Unix(),
-			"owned_by": "anthropic",
+			"created":  now,
+			"owned_by": owners[id],
 		})
 	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
 		"data":   modelList,

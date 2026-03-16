@@ -356,7 +356,12 @@ func (r *Registry) StartHealthCheck(interval time.Duration) {
 
 	go func() {
 		// Run an initial check after a short delay to let async token refreshes complete.
-		time.Sleep(5 * time.Second)
+		// For short intervals (tests), avoid waiting a fixed 5s before first check.
+		initialDelay := 5 * time.Second
+		if interval > 0 && interval < initialDelay {
+			initialDelay = interval
+		}
+		time.Sleep(initialDelay)
 		checkAll()
 
 		ticker := time.NewTicker(interval)

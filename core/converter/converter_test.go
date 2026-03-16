@@ -18,10 +18,12 @@ func TestResolveModel_ExactMatch(t *testing.T) {
 		want  string
 	}{
 		{"claude-opus-4.6", "claude-opus-4.6"},
-		{"claude-opus-4-6", "claude-opus-4.6"},
+		{"claude-opus-4-6", "claude-opus-4-6"},
 		{"claude-sonnet-4.6", "claude-sonnet-4.6"},
 		{"claude-opus-4.5", "claude-opus-4.5"},
-		{"claude-sonnet-4-5", "claude-sonnet-4.5"},
+		{"claude-sonnet-4-5", "claude-sonnet-4-5"},
+		{"gpt-4o", "gpt-4o"},
+		{"  gpt-4o  ", "gpt-4o"},
 	}
 	for _, tc := range tests {
 		if got := ResolveModel(tc.input); got != tc.want {
@@ -30,24 +32,30 @@ func TestResolveModel_ExactMatch(t *testing.T) {
 	}
 }
 
-func TestResolveModel_AliasToDefault(t *testing.T) {
-	aliases := []string{
-		"gpt-4o", "gpt-4", "gpt-3.5-turbo", "auto",
-		"claude-sonnet-4-20250514", "claude-haiku-4.5",
-		"deepseek-3.2", "kimi-k2.5", "glm-4.7",
+func TestResolveModel_ClaudeDateSuffixStripping(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"claude-sonnet-4-20250514", "claude-sonnet-4"},
+		{"claude-opus-4-20250514", "claude-opus-4"},
+		{"claude-sonnet-4-5-20250929", "claude-sonnet-4-5"},
 	}
-	for _, alias := range aliases {
-		got := ResolveModel(alias)
-		if got != "claude-opus-4.6" {
-			t.Errorf("ResolveModel(%q) = %q, want claude-opus-4.6", alias, got)
+	for _, tc := range tests {
+		got := ResolveModel(tc.input)
+		if got != tc.want {
+			t.Errorf("ResolveModel(%q) = %q, want %q", tc.input, got, tc.want)
 		}
 	}
 }
 
-func TestResolveModel_UnknownFallsToDefault(t *testing.T) {
-	if got := ResolveModel("totally-unknown-model"); got != DefaultModel {
-		t.Errorf("ResolveModel(unknown) = %q, want %q", got, DefaultModel)
+func TestResolveModel_UnknownPassthrough(t *testing.T) {
+	if got := ResolveModel("totally-unknown-model"); got != "totally-unknown-model" {
+		t.Errorf("ResolveModel(unknown) = %q, want passthrough", got)
 	}
+}
+
+func TestResolveModel_EmptyFallsToDefault(t *testing.T) {
 	if got := ResolveModel(""); got != DefaultModel {
 		t.Errorf("ResolveModel(\"\") = %q, want %q", got, DefaultModel)
 	}
