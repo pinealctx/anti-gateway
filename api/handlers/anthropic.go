@@ -170,9 +170,21 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 		go func() {
 			if err := provider.StreamCompletion(c.Request.Context(), req, stream); err != nil {
 				if c.Request.Context().Err() != nil {
-					h.logger.Debug("stream completion canceled (client disconnected)", zap.Error(err))
+					h.logger.Debug("stream completion canceled (client disconnected)",
+						zap.Error(err),
+						zap.String("request_id", reqID),
+						zap.String("requested_model", model),
+						zap.String("upstream_model", req.Model),
+						zap.String("provider", provider.Name()),
+					)
 				} else {
-					h.logger.Error("stream completion error", zap.Error(err))
+					h.logger.Error("stream completion error",
+						zap.Error(err),
+						zap.String("request_id", reqID),
+						zap.String("requested_model", model),
+						zap.String("upstream_model", req.Model),
+						zap.String("provider", provider.Name()),
+					)
 				}
 			}
 		}()
@@ -181,10 +193,22 @@ func (h *AnthropicHandler) handleStream(c *gin.Context, provider providers.AIPro
 		for chunk := range stream {
 			if chunk.Error != nil {
 				if c.Request.Context().Err() != nil {
-					h.logger.Debug("stream chunk error (client disconnected)", zap.Error(chunk.Error))
+					h.logger.Debug("stream chunk error (client disconnected)",
+						zap.Error(chunk.Error),
+						zap.String("request_id", reqID),
+						zap.String("requested_model", model),
+						zap.String("upstream_model", req.Model),
+						zap.String("provider", provider.Name()),
+					)
 					break
 				}
-				h.logger.Error("stream error", zap.Error(chunk.Error))
+				h.logger.Error("stream error",
+					zap.Error(chunk.Error),
+					zap.String("request_id", reqID),
+					zap.String("requested_model", model),
+					zap.String("upstream_model", req.Model),
+					zap.String("provider", provider.Name()),
+				)
 				if !textStarted {
 					_ = writer.WriteContentBlockStart()
 					textStarted = true
