@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,20 +14,6 @@ import (
 // -ldflags "-X github.com/pinealctx/anti-gateway/config.Version=vX.Y.Z"
 // Default remains "dev" for local builds.
 var Version = "dev"
-
-// Config holds the resolved application configuration.
-type Config struct {
-	// Server
-	Host     string
-	Port     int
-	LogLevel string
-
-	// Auth
-	APIKey string
-
-	// Provider defaults
-	DefaultModel string
-}
 
 // BindFlags registers persistent flags on the given cobra.Command.
 // Call this once during command initialization (e.g. in init()).
@@ -53,7 +40,7 @@ func BindFlags(cmd *cobra.Command) {
 
 	// Tenant
 	f.Bool("tenant", false, "Enable multi-tenant mode (env: TENANT_ENABLED)")
-	f.String("db-path", "antigateway.db", "SQLite database path (env: DB_PATH)")
+	f.String("db-path", DefaultDBPath(), "SQLite database path (env: DB_PATH)")
 
 	// UI
 	f.BoolP("open", "o", false, "Open UI in browser on startup (env: OPEN_UI)")
@@ -62,17 +49,14 @@ func BindFlags(cmd *cobra.Command) {
 	f.StringP("config", "c", "", "Path to config file (YAML/TOML/JSON)")
 }
 
-// FromCommand reads flag values from the executed cobra.Command,
-// applies env-var fallback ( flag > env > default ), and returns the Config.
-func FromCommand(cmd *cobra.Command) *Config {
-	cfg := &Config{
-		Host:         resolveStr(cmd, "host", "HOST"),
-		Port:         resolveInt(cmd, "port", "PORT"),
-		LogLevel:     strings.ToLower(resolveStr(cmd, "log-level", "LOG_LEVEL")),
-		APIKey:       resolveStr(cmd, "api-key", "API_KEY"),
-		DefaultModel: resolveStr(cmd, "model", "DEFAULT_MODEL"),
+// DefaultDBPath returns the default SQLite path in the user-scoped global directory.
+// Fallback to a relative path when home directory cannot be resolved.
+func DefaultDBPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "antigateway.db"
 	}
-	return cfg
+	return filepath.Join(home, ".anti-gateway", "antigateway.db")
 }
 
 // LoadGatewayConfig loads the full gateway configuration.
@@ -111,6 +95,7 @@ func loadFromFile(path string, cmd *cobra.Command) (*GatewayConfig, error) {
 	}
 	if cmd.Flags().Changed("log-level") {
 		gw.Server.LogLevel, _ = cmd.Flags().GetString("log-level")
+		gw.Server.LogLevel = strings.ToLower(gw.Server.LogLevel)
 	}
 	if cmd.Flags().Changed("api-key") {
 		gw.Auth.APIKey, _ = cmd.Flags().GetString("api-key")
@@ -150,6 +135,8 @@ func loadFromFile(path string, cmd *cobra.Command) (*GatewayConfig, error) {
 	}
 	if gw.Server.LogLevel == "" {
 		gw.Server.LogLevel = "info"
+	} else {
+		gw.Server.LogLevel = strings.ToLower(gw.Server.LogLevel)
 	}
 	if gw.Defaults.Model == "" {
 		gw.Defaults.Model = "claude-opus-4.6"
@@ -161,7 +148,7 @@ func loadFromFile(path string, cmd *cobra.Command) (*GatewayConfig, error) {
 		gw.Defaults.HealthCheckSeconds = 60
 	}
 	if gw.Tenant.DBPath == "" {
-		gw.Tenant.DBPath = "antigateway.db"
+		gw.Tenant.DBPath = DefaultDBPath()
 	}
 
 	return &gw, nil
@@ -211,7 +198,7 @@ func synthesizeFromFlags(cmd *cobra.Command) *GatewayConfig {
 		healthCheckInterval = 60
 	}
 	if dbPath == "" {
-		dbPath = "antigateway.db"
+		dbPath = DefaultDBPath()
 	}
 
 	return &GatewayConfig{

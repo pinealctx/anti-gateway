@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,7 +54,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	// Setup logger
 	var logger *zap.Logger
-	if gwCfg.Server.LogLevel == "debug" {
+	if strings.EqualFold(strings.TrimSpace(gwCfg.Server.LogLevel), "debug") {
 		logger, err = zap.NewDevelopment()
 	} else {
 		logger, err = zap.NewProduction()
@@ -89,7 +91,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// SQLite store — always created for provider & key management
 	dbPath := gwCfg.Tenant.DBPath
 	if dbPath == "" {
-		dbPath = "antigateway.db"
+		dbPath = config.DefaultDBPath()
+	}
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		log.Fatalf("Failed to create db directory: %v", err)
 	}
 	store, err := tenant.NewStore(dbPath)
 	if err != nil {

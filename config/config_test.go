@@ -117,6 +117,26 @@ server:
 	}
 }
 
+func TestLoadFromFile_LogLevelNormalized(t *testing.T) {
+	yaml := `
+server:
+  log_level: "DEBUG"
+`
+	path := writeTemp(t, "loglevel.yaml", yaml)
+	cmd := newTestCmd()
+	cmd.SetArgs([]string{"--config", path})
+	cmd.Execute()
+
+	gw, err := LoadGatewayConfig(cmd)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if gw.Server.LogLevel != "debug" {
+		t.Errorf("log_level = %q, want debug", gw.Server.LogLevel)
+	}
+}
+
 // ============================================================
 // No config file → synthesize from flags
 // ============================================================
@@ -140,6 +160,9 @@ func TestSynthesizeFromFlags(t *testing.T) {
 	if gw.Defaults.Provider != "" {
 		t.Errorf("should default to empty provider, got %q", gw.Defaults.Provider)
 	}
+	if gw.Tenant.DBPath != DefaultDBPath() {
+		t.Errorf("db_path = %q, want %q", gw.Tenant.DBPath, DefaultDBPath())
+	}
 }
 
 // ============================================================
@@ -154,30 +177,6 @@ func TestLoadFromFile_BadPath(t *testing.T) {
 	_, err := LoadGatewayConfig(cmd)
 	if err == nil {
 		t.Error("should error on missing config file")
-	}
-}
-
-// ============================================================
-// FromCommand
-// ============================================================
-
-func TestFromCommand(t *testing.T) {
-	cmd := newTestCmd()
-	cmd.SetArgs([]string{"--host", "10.0.0.1", "--port", "5555", "--log-level", "DEBUG", "--model", "gpt-4"})
-	cmd.Execute()
-
-	cfg := FromCommand(cmd)
-	if cfg.Host != "10.0.0.1" {
-		t.Errorf("host = %q", cfg.Host)
-	}
-	if cfg.Port != 5555 {
-		t.Errorf("port = %d", cfg.Port)
-	}
-	if cfg.LogLevel != "debug" {
-		t.Errorf("log_level = %q (should lowercase)", cfg.LogLevel)
-	}
-	if cfg.DefaultModel != "gpt-4" {
-		t.Errorf("model = %q", cfg.DefaultModel)
 	}
 }
 
