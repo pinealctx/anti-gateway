@@ -53,7 +53,9 @@ func ImportLocalToken(dbPath string) (*LoginToken, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open kiro-cli database: %w", err)
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close()
+	}()
 
 	// Try new external-idp token first
 	lt, err := readExternalIdPToken(db)
