@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/pinealctx/anti-gateway/core/eventstream"
+	"github.com/pinealctx/anti-gateway/core/logutil"
 	"github.com/pinealctx/anti-gateway/models"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -20,6 +22,7 @@ const (
 	cwUserAgent = "kiro-cli-chat-macos-aarch64-1.27.2"
 
 	maxRetries = 3
+	maxLogBody = 64 * 1024
 )
 
 // retryBackoff defines the backoff durations for retries: [1s, 3s, 10s].
@@ -65,6 +68,20 @@ func (c *CWClient) GenerateStream(ctx context.Context, cwReq *models.CWRequest, 
 		return nil, fmt.Errorf("marshal cw request: %w", err)
 	}
 
+	debugEnabled := c.logger.Core().Enabled(zapcore.DebugLevel)
+	if debugEnabled {
+		reqBody, reqTruncated := logutil.TruncateString(logutil.RedactString(string(bodyBytes)), maxLogBody)
+		reqBody = logutil.WithTruncationSuffix(reqBody, reqTruncated, len(bodyBytes), maxLogBody)
+		c.logger.Debug("kiro upstream request",
+			zap.String("url", cwEndpoint),
+			zap.String("method", "POST"),
+			zap.String("content_type", "application/x-amz-json-1.0"),
+			zap.String("target", cwTarget),
+			zap.String("token_type", map[bool]string{true: "EXTERNAL_IDP", false: "STANDARD"}[token.IsExternalIdP]),
+			zap.String("request_body", reqBody),
+		)
+	}
+
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
@@ -107,6 +124,15 @@ func (c *CWClient) GenerateStream(ctx context.Context, cwReq *models.CWRequest, 
 		if resp.StatusCode >= 500 {
 			body, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
+			if debugEnabled {
+				respBody, truncated := logutil.TruncateString(logutil.RedactString(string(body)), maxLogBody)
+				respBody = logutil.WithTruncationSuffix(respBody, truncated, len(body), maxLogBody)
+				c.logger.Debug("kiro upstream response",
+					zap.Int("status", resp.StatusCode),
+					zap.Any("headers", logutil.RedactHeaders(resp.Header)),
+					zap.String("response_body", respBody),
+				)
+			}
 			lastErr = fmt.Errorf("cw returned %d: %s", resp.StatusCode, string(body))
 			continue // retry on 5xx
 		}
@@ -114,7 +140,24 @@ func (c *CWClient) GenerateStream(ctx context.Context, cwReq *models.CWRequest, 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
+			if debugEnabled {
+				respBody, truncated := logutil.TruncateString(logutil.RedactString(string(body)), maxLogBody)
+				respBody = logutil.WithTruncationSuffix(respBody, truncated, len(body), maxLogBody)
+				c.logger.Debug("kiro upstream response",
+					zap.Int("status", resp.StatusCode),
+					zap.Any("headers", logutil.RedactHeaders(resp.Header)),
+					zap.String("response_body", respBody),
+				)
+			}
 			return nil, fmt.Errorf("cw returned %d: %s", resp.StatusCode, string(body))
+		}
+
+		if debugEnabled {
+			c.logger.Debug("kiro upstream response",
+				zap.Int("status", resp.StatusCode),
+				zap.Any("headers", logutil.RedactHeaders(resp.Header)),
+				zap.String("response_body", "[streaming event payloads logged separately]"),
+			)
 		}
 
 		events := make(chan CWStreamEvent, 32)
@@ -143,6 +186,17 @@ func (c *CWClient) processStream(body io.ReadCloser, out chan<- CWStreamEvent) {
 	}
 
 	for raw := range rawEvents {
+		if c.logger.Core().Enabled(zapcore.DebugLevel) {
+			payload := logutil.RedactString(string(raw.Payload))
+			payload, truncated := logutil.TruncateString(payload, maxLogBody)
+			payload = logutil.WithTruncationSuffix(payload, truncated, len(raw.Payload), maxLogBody)
+			c.logger.Debug("kiro upstream stream event raw",
+				zap.String("message_type", raw.MessageType),
+				zap.String("event_type", raw.EventType),
+				zap.String("payload", payload),
+			)
+		}
+
 		if raw.MessageType == "exception" {
 			var exc models.CWExceptionEvent
 			_ = json.Unmarshal(raw.Payload, &exc)

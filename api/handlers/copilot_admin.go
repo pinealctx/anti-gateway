@@ -131,6 +131,7 @@ func (h *CopilotAdminHandler) CompleteDeviceFlow(c *gin.Context) {
 
 	// Set the GitHub token on the provider (single account per provider)
 	provider.SetGithubToken(token)
+	h.registry.CheckHealthFor(provider.Name())
 	provider.AuthMgr().RemoveSession(id)
 
 	// Persist the token to database

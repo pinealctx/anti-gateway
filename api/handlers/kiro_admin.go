@@ -149,6 +149,7 @@ func (h *KiroAdminHandler) CompleteLogin(c *gin.Context) {
 	}
 
 	provider.SetLoginToken(lt)
+	h.registry.CheckHealthFor(provider.Name())
 	provider.AuthMgr().RemoveSession(id)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -184,6 +185,7 @@ func (h *KiroAdminHandler) RefreshToken(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	h.registry.CheckHealthFor(provider.Name())
 
 	c.JSON(http.StatusOK, provider.TokenStatus())
 }
@@ -211,6 +213,7 @@ func (h *KiroAdminHandler) ImportLocal(c *gin.Context) {
 	}
 
 	provider.SetLoginToken(lt)
+	h.registry.CheckHealthFor(provider.Name())
 
 	resp := gin.H{
 		"message":         "kiro-cli token imported",
